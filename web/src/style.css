@@ -1,0 +1,52 @@
+@import 'tailwindcss';
+
+/* Design tokens.
+ *
+ * Tailwind v4 derives utilities from @theme, so defining a token here
+ * generates the matching classes (bg-surface, text-muted, border-line, ...).
+ * Keeping the palette in one place is what makes a later visual pass a change
+ * to this block rather than a sweep through every component.
+ */
+@theme {
+  --color-surface: oklch(0.18 0.014 265);
+  --color-surface-raised: oklch(0.23 0.016 265);
+  --color-surface-sunken: oklch(0.14 0.012 265);
+  --color-line: oklch(0.32 0.018 265);
+
+  --color-ink: oklch(0.95 0.006 265);
+  --color-ink-muted: oklch(0.72 0.014 265);
+  --color-ink-faint: oklch(0.56 0.014 265);
+
+  --color-accent: oklch(0.72 0.15 55);
+  --color-accent-ink: oklch(0.2 0.04 55);
+
+  /* Stage status. The same four colours are used everywhere a stage is shown,
+     so "green means done" is learned once. */
+  --color-status-pending: oklch(0.62 0.02 265);
+  --color-status-running: oklch(0.72 0.15 250);
+  --color-status-done: oklch(0.7 0.15 155);
+  --color-status-failed: oklch(0.65 0.19 25);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  @apply bg-surface text-ink antialiased;
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', 'Hiragino Sans',
+    'Microsoft YaHei', sans-serif;
+}
+
+/* Respect a user's motion preference rather than animating regardless. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

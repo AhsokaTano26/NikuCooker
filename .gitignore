@@ -61,12 +61,15 @@ web/node_modules/
 web/.vite/
 web/coverage/
 
-# The build output is ignored, but a placeholder index.html is committed so that
-# `go build` works on a fresh clone with no Node toolchain: web/embed.go has a
-# //go:embed directive that requires dist/ to exist. `make web-build` overwrites
-# it with the real application.
+# The build output is ignored, but a .gitkeep is committed so that `go build`
+# works on a fresh clone with no Node toolchain: web/embed.go has a //go:embed
+# directive that fails to compile when dist/ is absent, and git cannot track an
+# empty directory. `make web-build` fills dist/ with the real application.
+#
+# The "UI not built" fallback page lives in web/unbuilt.html, outside dist/, so
+# that building does not leave a tracked file modified.
 web/dist/*
-!web/dist/index.html
+!web/dist/.gitkeep
 *.local
 .eslintcache
 npm-debug.log*

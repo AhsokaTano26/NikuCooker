@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>NikuCooker — 前端未构建</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+      }
+      body {
+        margin: 0;
+        padding: 3rem 1.5rem;
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif;
+        line-height: 1.7;
+        background: #16181d;
+        color: #e8eaed;
+      }
+      main {
+        max-width: 42rem;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.4rem;
+        margin: 0 0 0.25rem;
+      }
+      p {
+        color: #a8adb7;
+      }
+      code {
+        background: #22252b;
+        border-radius: 0.25rem;
+        padding: 0.1rem 0.35rem;
+        font-size: 0.875em;
+      }
+      .badge {
+        display: inline-block;
+        border: 1px solid #3a3f49;
+        border-radius: 999px;
+        padding: 0.1rem 0.6rem;
+        font-size: 0.75rem;
+        color: #8b919c;
+        vertical-align: middle;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>NikuCooker <span class="badge">前端未构建</span></h1>
+
+      <p>
+        这个二进制里没有打包 Web 界面。运行 <code>make web-build</code> 构建 Vue 应用，然后重新构建 Go
+        二进制即可。
+      </p>
+
+      <p>
+        API 不受影响，仍然可以在 <code>/api/v1</code> 下访问。
+      </p>
+
+      <p>
+        之所以会出现这个页面：<code>web/dist/</code> 只保留了占位文件，而
+        <code>//go:embed</code> 需要该目录存在才能编译。占位文件不放在
+        <code>dist/</code> 内，是为了让每次构建后工作区保持干净。
+      </p>
+    </main>
+  </body>
+</html>
