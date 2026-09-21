@@ -1,0 +1,92 @@
+# NikuCooker
+#
+#   docker compose up -d                       # CPU
+#   docker compose --profile cuda up -d        # NVIDIA GPU
+#
+# Both services share a container name, so they cannot run at once — an explicit
+# choice rather than two containers silently fighting over one SQLite file.
+
+name: nikucooker
+
+services:
+  nikucooker:
+    image: ghcr.io/ahsokatano26/nikucooker:cpu-0.1.0
+    build:
+      context: .
+      target: runtime-cpu
+      args:
+        CODE_REVISION: ${CODE_REVISION:-unknown}
+    container_name: nikucooker
+    restart: unless-stopped
+
+    ports:
+      # Bound to loopback, not 0.0.0.0. NikuCooker v1 has no authentication, and
+      # binding a service that reads local files to every interface on a machine
+      # with a public IP is not a default anyone should inherit. To serve a
+      # trusted LAN, change this to "8080:8080" and read the warning the server
+      # prints at startup.
+      - "127.0.0.1:8080:8080"
+
+    volumes:
+      - ./data:/data
+      - ./models:/models
+      - ./config:/config
+
+    environment:
+      NIKUCOOKER_LOG_LEVEL: info
+
+    # The Docker default of 64 MB makes CTranslate2 and FFmpeg fail on large
+    # inputs, with errors that never mention shared memory.
+    shm_size: "1gb"
+
+    healthcheck:
+      test: ["CMD", "nikucooker", "version"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    # Files created in /data are otherwise owned by root on the host. Uncomment
+    # and set to your own ids if you want to edit project files directly:
+    #   user: "${UID:-1000}:${GID:-1000}"
+
+  nikucooker-cuda:
+    profiles: ["cuda"]
+    image: ghcr.io/ahsokatano26/nikucooker:cuda-0.1.0
+    build:
+      context: .
+      target: runtime-cuda
+      args:
+        CODE_REVISION: ${CODE_REVISION:-unknown}
+    container_name: nikucooker
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    volumes:
+      - ./data:/data
+      - ./models:/models
+      - ./config:/config
+
+    environment:
+      NIKUCOOKER_LOG_LEVEL: info
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    shm_size: "1gb"
+
+    healthcheck:
+      test: ["CMD", "nikucooker", "version"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

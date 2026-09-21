@@ -1,0 +1,95 @@
+# GoReleaser configuration.
+#
+#   goreleaser release --snapshot --clean     # local dry run
+#
+# Validate with `goreleaser check`. See docs/deployment.md §7.
+
+version: 2
+
+project_name: nikucooker
+
+before:
+  hooks:
+    # The web application is embedded, so it has to exist before Go compiles.
+    - pnpm --dir web install --frozen-lockfile
+    - pnpm --dir web build
+
+builds:
+  - id: nikucooker
+    main: ./cmd/nikucooker
+    binary: nikucooker
+    env:
+      # CGO-free is what makes this matrix a list rather than five toolchains.
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      # Not cosmetic: codeRevision participates in every artifact cache key, so
+      # it is what stops a new binary from serving output produced by an older
+      # implementation. See docs/artifact-cache.md §2.2.
+      - -X main.codeRevision={{ .Commit }}
+      - -X main.buildDate={{ .Date }}
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # No Windows arm64 Python stack exists in practice; shipping a binary that
+      # cannot find a worker would be a promise we cannot keep.
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: nikucooker
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-next'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  draft: true
+  # The release is drafted so the notes can be reviewed before anything is
+  # published — a release is outward-facing and hard to walk back.
+  footer: |
+    ## Installation
+
+    Native binaries do not bundle Python. To use one, install Python 3.12 and
+    the AI dependencies:
+
+    ```
+    git clone https://github.com/AhsokaTano26/NikuCooker
+    cd NikuCooker/ai && uv sync
+    ```
+
+    If you would rather not manage a Python environment, use the Docker image
+    instead — it is the recommended path:
+
+    ```
+    docker compose up -d
+    ```

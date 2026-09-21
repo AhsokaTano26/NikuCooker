@@ -1,0 +1,192 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run's results irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Keep Go's build cache in the module cache directory so the setup-go cache
+  # action picks it up alongside the modules.
+  GOFLAGS: -mod=readonly
+
+jobs:
+  go:
+    name: Go (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Path handling, process spawning and file locking differ enough between
+        # the three that a Linux-only CI would let portability bugs through
+        # until release. See NFR-PORT-1.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify gofmt
+        if: runner.os == 'Linux'
+        run: |
+          out=$(gofmt -l cmd internal pkg web)
+          if [ -n "$out" ]; then
+            echo "gofmt needed on:"; echo "$out"; exit 1
+          fi
+        shell: bash
+
+      - name: Build
+        # CGO_ENABLED=0 exercises the same code path the release matrix uses.
+        env:
+          CGO_ENABLED: '0'
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -race
+
+      - name: golangci-lint
+        if: runner.os == 'Linux'
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          args: --timeout=5m
+
+  python:
+    name: Python ${{ matrix.python }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.12']
+        include:
+          # The range is >=3.12,<3.15. Testing the other end on one OS catches a
+          # ceiling that moves without the whole matrix growing.
+          - os: ubuntu-latest
+            python: '3.14'
+    defaults:
+      run:
+        working-directory: ai
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: ai/uv.lock
+
+      - name: Install
+        # --frozen makes the build fail if uv.lock is out of step with
+        # pyproject.toml, rather than silently resolving a different set.
+        run: uv sync --frozen --extra dev --python ${{ matrix.python }}
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run pyright
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Self-check
+        # Proves the entry point, the stdout discipline and the schema digest all
+        # work in a clean environment on this platform.
+        run: uv run python -m nikucooker_ai --selfcheck
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        # TypeScript strict. A type error is a build failure, not a warning.
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  docker:
+    name: Docker (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: [go, python, web]
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [runtime-cpu, runtime-cuda]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: false
+          load: true
+          tags: nikucooker:${{ matrix.target }}
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,scope=${{ matrix.target }},mode=max
+
+      - name: Smoke test
+        # Only the CPU image is exercised: GitHub-hosted runners have no GPU, so
+        # a CUDA container cannot start. Building it still catches the drift that
+        # matters — a broken Dockerfile or an uninstallable dependency set.
+        if: matrix.target == 'runtime-cpu'
+        run: |
+          docker run --rm nikucooker:runtime-cpu version
+          # The embedded web application must be present, not the fallback page.
+          docker run --rm --entrypoint sh nikucooker:runtime-cpu \
+            -c 'test -f /usr/local/bin/nikucooker'
+
+      - name: Verify the CPU image carries no CUDA wheels
+        if: matrix.target == 'runtime-cpu'
+        run: |
+          if docker run --rm --entrypoint sh nikucooker:runtime-cpu \
+               -c 'ls /app/ai/.venv/lib/python3.12/site-packages | grep -i nvidia'; then
+            echo "::error::the CPU image contains NVIDIA packages"
+            exit 1
+          fi
+          echo "clean"
