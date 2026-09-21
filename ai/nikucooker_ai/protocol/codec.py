@@ -8,7 +8,7 @@ worker's stdin; the worker writes events on a private handle to the real stdout
 from __future__ import annotations
 
 import json
-from typing import Any, BinaryIO
+from typing import IO, Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -56,7 +56,7 @@ class ProtocolLineTooLong(ProtocolDecodeError):
 class ProtocolReader:
     """Reads newline-delimited JSON messages from a binary stream."""
 
-    def __init__(self, stream: BinaryIO, max_bytes: int = MAX_LINE_BYTES) -> None:
+    def __init__(self, stream: IO[bytes], max_bytes: int = MAX_LINE_BYTES) -> None:
         self._stream = stream
         self._max = max_bytes
 
@@ -96,7 +96,7 @@ class ProtocolWriter:
     other liveness signal.
     """
 
-    def __init__(self, stream: BinaryIO) -> None:
+    def __init__(self, stream: IO[bytes]) -> None:
         self._stream = stream
 
     def write(self, message: BaseModel | dict[str, Any]) -> None:

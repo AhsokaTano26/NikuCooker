@@ -8,5 +8,6 @@
 // Restoring it here rather than in the Makefile means a bare `pnpm build` also
 // leaves the working tree clean.
 import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
-writeFileSync(new URL('../dist/.gitkeep', import.meta.url), '')
+writeFileSync(join(import.meta.dirname, '..', 'dist', '.gitkeep'), '')
