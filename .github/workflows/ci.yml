@@ -53,6 +53,17 @@ jobs:
           CGO_ENABLED: '0'
         run: go build ./...
 
+      - name: Set up the AI worker environment
+        # The worker IPC tests spawn a real Python process. Without this they
+        # skip, and a suite that silently skips is a suite that stops being run.
+        if: runner.os == 'Linux'
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install AI worker dependencies
+        if: runner.os == 'Linux'
+        working-directory: ai
+        run: uv sync --frozen
+
       - name: Vet
         run: go vet ./...
 
