@@ -1,0 +1,79 @@
+# golangci-lint configuration.
+#
+# Pinned rather than left to the tool's defaults: an unpinned linter set means
+# a dependency upgrade can start failing CI for reasons unrelated to the change
+# that triggered it.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    # Catches a wrapped error that is discarded, which is how a failure becomes
+    # a mystery three layers up.
+    - errorlint
+    # Unchecked type assertions panic at runtime; this finds them at lint time.
+    - forcetypeassert
+    # An unclosed response body or file descriptor is invisible until a long
+    # run exhausts descriptors — plausible here, where stage workers open files
+    # in a loop.
+    - bodyclose
+    - noctx
+    # Security-adjacent checks. Relevant because this project shells out to
+    # FFmpeg and builds paths from user input.
+    - gosec
+    # Subprocess and loop-variable mistakes, which the worker supervisor and the
+    # event fan-out are both exposed to.
+    - gocritic
+    - unconvert
+    - wastedassign
+
+  settings:
+    errcheck:
+      # Writes to a ResponseWriter and Close on a deferred handle are the two
+      # places an ignored error is genuinely correct.
+      exclude-functions:
+        - (net/http.ResponseWriter).Write
+        - (*os.File).Close
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        # Single-case switches are clearer than if-chains in the protocol
+        # decoder, where each case mirrors a wire value.
+        - singleCaseSwitch
+
+    gosec:
+      excludes:
+        # File paths are built by the storage layer from server-generated IDs,
+        # never from user input; see docs/requirements.md FR-SEC-2. The rule
+        # cannot see that, so it is suppressed here rather than ignored inline
+        # at each call site.
+        - G304
+        # Subprocess arguments are always passed as a vector, never a shell
+        # string (NFR-PORT-5). G204 flags any variable argument.
+        - G204
+
+  exclusions:
+    rules:
+      # Tests build deliberately malformed input and use long literals.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - forcetypeassert
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/AhsokaTano26/NikuCooker
