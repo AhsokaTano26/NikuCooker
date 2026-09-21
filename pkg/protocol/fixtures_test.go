@@ -361,6 +361,41 @@ func TestCanonicalizeJSON(t *testing.T) {
 			t.Error("accepted two concatenated documents as one")
 		}
 	})
+
+	t.Run("does not html-escape", func(t *testing.T) {
+		// json.Marshal would emit < here. Python's json.dumps would not,
+		// and the two sides must agree byte for byte or their schema digests
+		// differ on identical input.
+		got := canonical(t, []byte(`{"a":"<b>&</b>"}`))
+		want := `{"a":"<b>&</b>"}`
+		if string(got) != want {
+			t.Errorf("got %s, want %s", got, want)
+		}
+	})
+}
+
+// TestFixturesAvoidEncoderDivergentRunes keeps the fixtures inside the subset of
+// JSON that Go and Python encode identically.
+//
+// The schema digest is computed by canonicalising these files on both sides. A
+// fixture containing a character the two encoders escape differently would
+// produce two different digests from one file set, and the handshake would fail
+// with a message about schema drift that had nothing to do with the schema.
+func TestFixturesAvoidEncoderDivergentRunes(t *testing.T) {
+	names, err := fixtureNames()
+	if err != nil {
+		t.Fatalf("list fixtures: %v", err)
+	}
+
+	for _, name := range names {
+		raw := mustFixture(t, name)
+		for _, r := range encoderDivergentRunes {
+			if bytes.ContainsRune(raw, r) {
+				t.Errorf("%s contains %q (U+%04X), which Go and Python JSON encoders escape differently",
+					name, r, r)
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

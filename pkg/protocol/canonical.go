@@ -37,14 +37,30 @@ func CanonicalizeJSON(raw []byte) ([]byte, error) {
 		return nil, errors.New("protocol: trailing data after JSON document")
 	}
 
-	// json.Marshal sorts map keys and emits no insignificant whitespace, which
-	// is exactly the canonical form once the value has been normalised above.
-	out, err := json.Marshal(v)
-	if err != nil {
+	// An Encoder rather than json.Marshal: Marshal escapes <, > and & to <
+	// and friends for safe embedding in HTML, and Python's json.dumps does not.
+	// Left alone, that difference alone would make the two sides compute
+	// different schema digests from identical input.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		return nil, fmt.Errorf("protocol: canonicalise: %w", err)
 	}
-	return out, nil
+
+	// Encode appends a newline; the canonical form is a single line.
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
+
+// encoderDivergentRunes are characters the Go and Python JSON writers cannot be
+// made to agree on.
+//
+// SetEscapeHTML(false) closes the gap for <, > and &, but encoding/json escapes
+// U+2028 and U+2029 unconditionally for JSONP safety, and Python does not.
+// Rather than carry a hand-written encoder on both sides to normalise two
+// characters that have no business in subtitle text, the fixtures are required
+// to avoid them — checked by a test, not left to a comment.
+var encoderDivergentRunes = []rune{'<', '>', '&', '\u2028', '\u2029'}
 
 // CanonicalJSON marshals v and returns it in canonical form.
 //
