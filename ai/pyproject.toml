@@ -1,0 +1,85 @@
+[project]
+name = "nikucooker-ai"
+version = "0.1.0"
+description = "AI inference worker for NikuCooker: speech recognition and voice activity detection"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+license = { text = "MIT" }
+
+# Version ranges are not guesses. Every pin below was verified by resolving
+# against real wheels for linux/amd64, linux/arm64, windows/amd64 and
+# darwin/arm64. See docs/dependency-audit.md.
+dependencies = [
+    "faster-whisper==1.2.1",
+    # faster-whisper already depends on onnxruntime unconditionally, so the
+    # VAD runs on the model bundled inside its wheel. The silero-vad package is
+    # deliberately absent: it requires torch and torchaudio with no torch-free
+    # path, which would add ~2.5 GB and pin torch==2.9.1.
+    # See docs/dependency-audit.md §3.
+    # PEP 508 markers have no unary `not`, so the negation of
+    # (darwin and x86_64) is written as (not-darwin or not-x86_64).
+    "onnxruntime==1.30.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "onnxruntime<=1.23.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "pydantic>=2.13.5,<3",
+    # Pinned explicitly because faster-whisper declares huggingface-hub>=0.21
+    # with no upper bound.
+    "huggingface-hub>=1.0,<2",
+    "av>=18.1.0,<19",
+]
+
+[project.optional-dependencies]
+# Empty on purpose: CPU wheels are the default resolution, and the Docker CPU
+# image selects this extra explicitly so the two images differ by name rather
+# than by an unstated default.
+cpu = []
+# cuDNN is NOT listed. CTranslate2 4.8.2 wheels are built with -DWITH_CUDNN=OFF,
+# so only cuBLAS is needed. See docs/dependency-audit.md §1.
+cuda = ["nvidia-cublas-cu12>=12,<13"]
+# The only GPU-accelerated ASR path on Apple Silicon, since CTranslate2 has no
+# Metal backend. Scheduled for a later phase; declared now so the boundary is
+# visible.
+mlx = ["mlx-whisper==0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+dev = ["pytest>=8", "ruff>=0.9", "pyright>=1.1"]
+
+[project.scripts]
+nikucooker-ai = "nikucooker_ai.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nikucooker_ai"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["nikucooker_ai", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle, pyflakes
+    "I",             # import sorting
+    "UP",            # pyupgrade
+    "B",             # bugbear
+    "SIM",           # simplify
+    "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into internals deliberately and use long fixture-driven literals.
+"tests/**" = ["E501"]
+
+[tool.pyright]
+include = ["nikucooker_ai", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+reportMissingImports = "warning"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Tests must never reach the network, a GPU or a model download. Anything that
+# needs one of those is a test that fails in CI, which means it gets skipped,
+# which means it is not a test.
+addopts = "-q --strict-markers"
+markers = ["slow: exercises a real model; excluded from CI"]
