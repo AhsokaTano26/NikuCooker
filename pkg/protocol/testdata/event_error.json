@@ -1,0 +1,1 @@
+{"v":1,"id":"req_001","type":"error","error":{"code":"MODEL_LOAD_FAILED","message":"Unable to open file 'model.bin'","retryable":false,"details":{"model":"large-v3","path":"/models/asr/large-v3"}}}

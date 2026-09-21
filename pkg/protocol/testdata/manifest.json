@@ -1,0 +1,13 @@
+{
+  "schema_digest": "sha256:40cc13b771c405e34706d5ddd57317dd562752193d698b5020af7a8ef91e2a63",
+  "files": [
+    "asr_result_full.json",
+    "event_error.json",
+    "event_progress.json",
+    "event_ready.json",
+    "request_asr_transcribe.json",
+    "result_asr_transcribe_bypath.json",
+    "result_asr_transcribe_inline.json",
+    "result_vad_detect.json"
+  ]
+}

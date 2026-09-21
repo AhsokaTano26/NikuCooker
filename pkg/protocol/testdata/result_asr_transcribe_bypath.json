@@ -1,0 +1,1 @@
+{"v":1,"id":"req_002","type":"result","elapsed_ms":486233,"result":{"result_path":"/data/projects/01J8ZP/tmp/asr-req_002.json","language":"ja","language_probability":0.99,"duration":1423.5,"segment_count":412,"word_count":9840,"device":"cpu","compute_type":"int8","model":"large-v3"}}

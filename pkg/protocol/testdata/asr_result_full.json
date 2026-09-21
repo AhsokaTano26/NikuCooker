@@ -1,0 +1,32 @@
+{
+  "language": "ja",
+  "language_probability": 0.99,
+  "duration": 1423.5,
+  "segments": [
+    {
+      "start": 1.24,
+      "end": 8.91,
+      "text": "こんにちは、今日はよろしくお願いします。",
+      "avg_logprob": -0.31,
+      "no_speech_prob": 0.008,
+      "words": [
+        { "start": 1.24, "end": 1.68, "text": "こんにちは", "probability": 0.97 },
+        { "start": 1.72, "end": 2.05, "text": "今日", "probability": 0.94 },
+        { "start": 2.1, "end": 2.62, "text": "は", "probability": 0.91 }
+      ]
+    },
+    {
+      "start": 10.02,
+      "end": 14.77,
+      "text": "それでは始めていきましょう。",
+      "avg_logprob": -0.24,
+      "no_speech_prob": 0.004,
+      "words": [
+        { "start": 10.02, "end": 10.61, "text": "それでは", "probability": 0.96 },
+        { "start": 10.65, "end": 11.42, "text": "始めて", "probability": 0.92 },
+        { "start": 11.42, "end": 12.1, "text": "いき", "probability": 0.88 },
+        { "start": 12.1, "end": 14.77, "text": "ましょう", "probability": 0.95 }
+      ]
+    }
+  ]
+}
