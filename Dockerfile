@@ -34,7 +34,10 @@ RUN pnpm build
 
 FROM golang:1.26-alpine AS go-builder
 
+ARG VERSION=dev
+ARG COMMIT=unknown
 ARG CODE_REVISION=unknown
+ARG BUILD_DATE=unknown
 
 WORKDIR /src
 
@@ -51,7 +54,11 @@ COPY --from=web-builder /src/dist ./web/dist
 # per-target toolchain problem. -trimpath keeps build paths out of the binary.
 RUN CGO_ENABLED=0 go build \
         -trimpath \
-        -ldflags "-s -w -X main.codeRevision=${CODE_REVISION}" \
+        -ldflags "-s -w \
+            -X main.version=${VERSION} \
+            -X main.commit=${COMMIT} \
+            -X main.codeRevision=${CODE_REVISION} \
+            -X main.buildDate=${BUILD_DATE}" \
         -o /out/nikucooker ./cmd/nikucooker
 
 # ---------------------------------------------------------------------------
@@ -71,12 +78,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app/ai
-COPY ai/pyproject.toml ai/uv.lock ./
+# README.md is copied too: pyproject.toml declares it, and uv builds the
+# project itself (an editable install) before syncing dependencies. Without
+# it, hatchling fails with "Readme file does not exist".
+COPY ai/pyproject.toml ai/uv.lock ai/README.md ./
 RUN uv sync --frozen --no-dev --extra ${AI_EXTRAS} \
     && rm -rf /root/.cache/uv
 COPY ai/ ./
 
 COPY --from=go-builder /out/nikucooker /usr/local/bin/nikucooker
+
+# The protocol fixtures live in the Go module and are read across the language
+# boundary. The worker derives its schema digest from them, so they have to be
+# present here or the handshake falls back to the manifest's weaker recorded
+# value. The path matters: schema.py resolves it as parents[3] of its own file,
+# which is /app, so no environment variable is needed.
+COPY pkg/protocol/testdata /app/pkg/protocol/testdata
 
 ENV NIKUCOOKER_DATA_DIR=/data \
     NIKUCOOKER_MODEL_DIR=/models \
@@ -122,12 +139,22 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/python
 RUN uv python install ${PYTHON_VERSION}
 
 WORKDIR /app/ai
-COPY ai/pyproject.toml ai/uv.lock ./
+# README.md is copied too: pyproject.toml declares it, and uv builds the
+# project itself (an editable install) before syncing dependencies. Without
+# it, hatchling fails with "Readme file does not exist".
+COPY ai/pyproject.toml ai/uv.lock ai/README.md ./
 RUN uv sync --frozen --no-dev --extra ${AI_EXTRAS} \
     && rm -rf /root/.cache/uv
 COPY ai/ ./
 
 COPY --from=go-builder /out/nikucooker /usr/local/bin/nikucooker
+
+# The protocol fixtures live in the Go module and are read across the language
+# boundary. The worker derives its schema digest from them, so they have to be
+# present here or the handshake falls back to the manifest's weaker recorded
+# value. The path matters: schema.py resolves it as parents[3] of its own file,
+# which is /app, so no environment variable is needed.
+COPY pkg/protocol/testdata /app/pkg/protocol/testdata
 
 ENV NIKUCOOKER_DATA_DIR=/data \
     NIKUCOOKER_MODEL_DIR=/models \

@@ -15,7 +15,10 @@ services:
       context: .
       target: runtime-cpu
       args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
         CODE_REVISION: ${CODE_REVISION:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     container_name: nikucooker
     restart: unless-stopped
 
@@ -57,7 +60,10 @@ services:
       context: .
       target: runtime-cuda
       args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
         CODE_REVISION: ${CODE_REVISION:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     container_name: nikucooker
     restart: unless-stopped
 
