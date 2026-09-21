@@ -21,12 +21,8 @@ from typing import IO
 
 from nikucooker_ai import SPEAKS_PROTOCOL_MAX, SPEAKS_PROTOCOL_MIN, __version__
 from nikucooker_ai.protocol import PROTOCOL_VERSION
-from nikucooker_ai.protocol.codec import ProtocolWriter
-from nikucooker_ai.protocol.errors import ErrorCode, ProtocolError
 
-#: Emitted when a report could not be produced at all.
 EXIT_OK = 0
-EXIT_UNUSABLE = 2
 
 
 def _claim_stdout() -> IO[bytes]:
@@ -107,17 +103,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit(protocol_out, report)
         return EXIT_OK
 
-    # Worker mode. The request loop is the next phase; until it exists, say so
-    # explicitly rather than accepting requests and failing on each one.
-    ProtocolWriter(protocol_out).write_fatal(
-        ProtocolError.make(
-            ErrorCode.UNSUPPORTED_METHOD,
-            "this build has no request loop; only --selfcheck and --version are implemented",
-            retryable=False,
-            details={"phase": "phase-0"},
-        )
-    )
-    return EXIT_UNUSABLE
+    # Worker mode: serve requests on stdin until the core says stop, or closes
+    # the pipe.
+    from nikucooker_ai.worker import Worker
+
+    return Worker(protocol_out).run(sys.stdin.buffer)
 
 
 if __name__ == "__main__":

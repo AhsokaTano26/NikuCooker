@@ -9,6 +9,8 @@ which both test suites decode and re-serialise. See docs/ipc-protocol.md §8.
 
 from nikucooker_ai.protocol.codec import (
     PROTOCOL_VERSION,
+    ProtocolDecodeError,
+    ProtocolLineTooLong,
     ProtocolReader,
     ProtocolWriter,
     canonical_json,
@@ -20,7 +22,9 @@ from nikucooker_ai.protocol.errors import ErrorCode, ProtocolError
 __all__ = [
     "PROTOCOL_VERSION",
     "ErrorCode",
+    "ProtocolDecodeError",
     "ProtocolError",
+    "ProtocolLineTooLong",
     "ProtocolReader",
     "ProtocolWriter",
     "canonical_json",
