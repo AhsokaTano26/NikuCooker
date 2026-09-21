@@ -165,14 +165,13 @@ func (s *Store) Begin(in KeyInputs) (*Writer, error) {
 		return nil, fmt.Errorf("artifact: create stage directory %s: %w", stageDir, err)
 	}
 
-	tmpDir := filepath.Join(stageDir, tmpPrefix+key)
-	// A leftover temp directory from a crashed run would otherwise fail the
-	// MkdirAll below with EEXIST.
-	if err := os.RemoveAll(tmpDir); err != nil {
-		return nil, fmt.Errorf("artifact: clear stale temp directory %s: %w", tmpDir, err)
-	}
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
-		return nil, fmt.Errorf("artifact: create temp directory %s: %w", tmpDir, err)
+	// MkdirTemp rather than a name derived from the key: a fixed name would be
+	// shared by any two writers of the same artifact, and clobbering a live
+	// writer's directory is a much worse failure than leaving a stale one
+	// behind, which the startup sweep already handles.
+	tmpDir, err := os.MkdirTemp(stageDir, tmpPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("artifact: create temp directory in %s: %w", stageDir, err)
 	}
 
 	return &Writer{
@@ -269,21 +268,7 @@ func (w *Writer) Commit(ctx context.Context, result Result) (*Artifact, error) {
 		CreatedAt:     now,
 	}
 
-	err = w.store.insert(ctx, a, string(metadataJSON))
-	if err != nil && isUniqueViolation(err) {
-		// Another run published the same artifact first. Its row and directory
-		// are equivalent to ours, so the correct response is to use them rather
-		// than to fail: the work was duplicated, not lost.
-		existing, lookupErr := w.store.Lookup(ctx, w.key)
-		if lookupErr != nil {
-			return nil, lookupErr
-		}
-		if existing != nil {
-			return existing, nil
-		}
-		return nil, fmt.Errorf("artifact: %s already exists but could not be read back: %w", w.key, err)
-	}
-	if err != nil {
+	if err := w.store.insert(ctx, a, string(metadataJSON)); err != nil {
 		return nil, err
 	}
 
@@ -311,20 +296,11 @@ func (w *Writer) Abort(ctx context.Context) error {
 		CreatedAt:  now,
 	}
 
-	if err := w.store.insert(ctx, a, "{}"); err != nil && !isUniqueViolation(err) {
-		return err
-	}
-	return nil
+	return w.store.insert(ctx, a, "{}")
 }
 
 func (s *Store) insert(ctx context.Context, a *Artifact, metadataJSON string) error {
-	const query = `
-		INSERT INTO artifacts
-			(id, project_id, stage, input_hash, config_hash, key, status, path,
-			 provider, model, prompt_version, size_bytes, metadata_json, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-
-	_, err := s.db.Write.ExecContext(ctx, query,
+	_, err := s.db.Write.ExecContext(ctx, upsertQuery,
 		a.ID, a.ProjectID, a.Stage, a.InputHash, a.ConfigHash, a.Key, string(a.Status), a.Path,
 		nullable(a.Provider), nullable(a.Model), nullable(a.PromptVersion),
 		a.SizeBytes, metadataJSON, a.CreatedAt.Format(time.RFC3339Nano),
@@ -334,6 +310,28 @@ func (s *Store) insert(ctx context.Context, a *Artifact, metadataJSON string) er
 	}
 	return nil
 }
+
+// upsertQuery records an artifact, replacing any existing row for the same key.
+//
+// The replace rather than a plain insert is what makes a retry work. A failed
+// attempt writes a row with status 'failed'; retrying the same work derives the
+// same key, and a plain INSERT would then fail the unique constraint — so the
+// retry could never succeed. Since the ID and path are derived from the key,
+// both rows describe the same directory, and the newer attempt simply gets to
+// say what state it is in.
+const upsertQuery = `
+	INSERT INTO artifacts
+		(id, project_id, stage, input_hash, config_hash, key, status, path,
+		 provider, model, prompt_version, size_bytes, metadata_json, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT (project_id, key) DO UPDATE SET
+		status = excluded.status,
+		provider = excluded.provider,
+		model = excluded.model,
+		prompt_version = excluded.prompt_version,
+		size_bytes = excluded.size_bytes,
+		metadata_json = excluded.metadata_json,
+		created_at = excluded.created_at`
 
 // ---------------------------------------------------------------------------
 // Retention
@@ -527,15 +525,4 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
-}
-
-// isUniqueViolation reports whether an error is SQLite's UNIQUE constraint
-// failure. Matching on the message is unavoidable: the driver does not export
-// a typed error for it.
-func isUniqueViolation(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unique constraint") || strings.Contains(msg, "constraint failed")
 }

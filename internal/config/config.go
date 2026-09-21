@@ -21,6 +21,7 @@ import (
 type Config struct {
 	Server      Server      `yaml:"server"`
 	Storage     Storage     `yaml:"storage"`
+	Pipeline    Pipeline    `yaml:"pipeline"`
 	AI          AI          `yaml:"ai"`
 	Audio       Audio       `yaml:"audio"`
 	VAD         VAD         `yaml:"vad"`
@@ -54,6 +55,16 @@ type Server struct {
 type Storage struct {
 	DataDir  string `yaml:"data_dir"`
 	ModelDir string `yaml:"model_dir"`
+}
+
+// Pipeline selects which stages a run includes.
+type Pipeline struct {
+	// Disabled names optional stages to leave out.
+	//
+	// Only optional stages may appear here: disabling a required stage would
+	// leave its dependents without an input, and the pipeline reports that as a
+	// configuration error rather than running a partial chain.
+	Disabled []string `yaml:"disabled"`
 }
 
 // AI configures the Python worker runtime.
@@ -258,6 +269,15 @@ func Default() *Config {
 		Storage: Storage{
 			DataDir:  "./data",
 			ModelDir: "./models",
+		},
+		Pipeline: Pipeline{
+			// polish is off because it is a second full LLM pass over every
+			// line, roughly doubling translation cost for a benefit largely
+			// achievable inside the translation prompt itself. It is worth
+			// enabling for high-value material a human will review anyway.
+			//
+			// render stays on: a user who asked for a video expects a video.
+			Disabled: []string{"polish"},
 		},
 		AI: AI{
 			Python: "auto",
