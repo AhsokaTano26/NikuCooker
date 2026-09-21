@@ -1,0 +1,108 @@
+# ---------------------------------------------------------------------------
+# Design documentation is kept local-only by project decision.
+#
+# ARCHITECTURE.md and docs/ describe the system in detail but are intentionally
+# not published. Note the consequence: anyone cloning this repository will not
+# see the architecture, only the code.
+#
+# These entries are deliberately placed first so the intent is obvious.
+# ---------------------------------------------------------------------------
+/ARCHITECTURE.md
+/docs/
+
+# ---------------------------------------------------------------------------
+# Go
+# ---------------------------------------------------------------------------
+/nikucooker
+/nikucooker.exe
+/dist/
+*.test
+*.out
+coverage.txt
+coverage.html
+vendor/
+
+# ---------------------------------------------------------------------------
+# Python (ai/)
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ai/.venv/
+ai/venv/
+*.egg-info/
+.eggs/
+build/
+# Anchored: an unanchored dist/ would also swallow web/dist, which holds the
+# committed embed placeholder.
+/dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+htmlcov/
+.coverage
+.coverage.*
+ai/nikucooker_ai/**/*.so
+
+# uv
+# uv.lock IS committed on purpose: it makes the dependency set reproducible.
+# See docs/dependency-audit.md.
+
+# ---------------------------------------------------------------------------
+# Node / Vue (web/)
+# ---------------------------------------------------------------------------
+node_modules/
+web/node_modules/
+web/.vite/
+web/coverage/
+
+# The build output is ignored, but a placeholder index.html is committed so that
+# `go build` works on a fresh clone with no Node toolchain: web/embed.go has a
+# //go:embed directive that requires dist/ to exist. `make web-build` overwrites
+# it with the real application.
+web/dist/*
+!web/dist/index.html
+*.local
+.eslintcache
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------------------------------------------------------------------------
+# Runtime data — never committed
+# ---------------------------------------------------------------------------
+/data/
+/models/
+/config/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+
+# ---------------------------------------------------------------------------
+# Editor and OS
+# ---------------------------------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Build and test scratch
+# ---------------------------------------------------------------------------
+/tmp/
+.cache/
+*.tmp
+.tmp-*
