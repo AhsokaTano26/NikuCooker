@@ -244,6 +244,42 @@ func Build(ctx context.Context, opts Options) (*Plan, error) {
 	return plan, nil
 }
 
+// stageEnv builds the environment a stage sees.
+//
+// One constructor for both the planner and the executor, because the two must
+// agree exactly. A field set in one and not the other produces a fingerprint —
+// and therefore a key — that differs between planning and execution, and the
+// artifact is then written under a key the next run will never look up. The
+// symptom is a stage that recomputes forever, with nothing in the logs to say
+// why; it is worth the awkward parameter list to make it unrepresentable.
+func stageEnv(
+	opts Options,
+	inputs map[string]*artifact.Artifact,
+	outDir string,
+	progress func(float64, string),
+) *stage.Env {
+	return &stage.Env{
+		ProjectID:         opts.ProjectID,
+		ProjectDir:        opts.Store.ProjectDir(),
+		JobID:             opts.JobID,
+		Project:           opts.Project,
+		Services:          opts.Services,
+		SourcePath:        opts.SourcePath,
+		Media:             opts.Media,
+		Worker:            opts.Worker,
+		Models:            opts.Models,
+		Config:            opts.Config,
+		Inputs:            inputs,
+		Artifacts:         opts.Store,
+		OutDir:            outDir,
+		Progress:          progress,
+		Log:               opts.Log,
+		Clock:             stage.SystemClock{},
+		SourceFingerprint: opts.SourceFingerprint,
+		StartedAt:         time.Now(),
+	}
+}
+
 // keyFor derives a stage's artifact key from its inputs and configuration.
 func keyFor(
 	ctx context.Context,
@@ -253,21 +289,8 @@ func keyFor(
 	upstream map[string]string,
 ) (string, error) {
 	spec := s.Spec()
-
-	env := &stage.Env{
-		ProjectID:         opts.ProjectID,
-		ProjectDir:        opts.Store.ProjectDir(),
-		JobID:             opts.JobID,
-		SourcePath:        opts.SourcePath,
-		Media:             opts.Media,
-		Worker:            opts.Worker,
-		Models:            opts.Models,
-		Config:            opts.Config,
-		Inputs:            inputs,
-		Artifacts:         opts.Store,
-		SourceFingerprint: opts.SourceFingerprint,
-		Clock:             stage.SystemClock{},
-	}
+	env := stageEnv(opts, inputs, "", nil)
+	env.Log = opts.Log
 
 	// A fingerprint failure is fatal to the plan: a key that silently omits an
 	// input would describe work other than what will run, and the cache would
@@ -298,9 +321,10 @@ func keyFor(
 // whether it is cached or still pending. Deriving keys in pipeline order is
 // what makes a downstream key computable before its upstream stages have run.
 func upstreamKeys(s stage.Stage, planned map[string]*StagePlan, external map[string]*artifact.Artifact) map[string]string {
-	out := make(map[string]string, len(s.Spec().Depends))
+	deps := dependencies(s)
+	out := make(map[string]string, len(deps))
 
-	for _, dep := range s.Spec().Depends {
+	for _, dep := range deps {
 		if dp, ok := planned[dep]; ok {
 			if dp.Key != "" {
 				out[dep] = dp.Key
@@ -326,9 +350,10 @@ func artifactsFor(
 	planned map[string]*StagePlan,
 	external map[string]*artifact.Artifact,
 ) (map[string]*artifact.Artifact, error) {
-	out := make(map[string]*artifact.Artifact, len(s.Spec().Depends))
+	deps := dependencies(s)
+	out := make(map[string]*artifact.Artifact, len(deps))
 
-	for _, dep := range s.Spec().Depends {
+	for _, dep := range deps {
 		if dp, ok := planned[dep]; ok {
 			if dp.Artifact != nil {
 				out[dep] = dp.Artifact
@@ -340,6 +365,21 @@ func artifactsFor(
 		}
 	}
 	return out, nil
+}
+
+// dependencies returns every stage this one consumes, required and optional.
+//
+// One function rather than four, because the planner derives a cache key from
+// this list and the executor supplies artifacts from it. When the two disagree,
+// a stage is keyed on fewer inputs than it actually reads: a changed optional
+// dependency neither invalidates the cache nor, since the executor also writes
+// under the executor's list, ever matches what was written.
+func dependencies(s stage.Stage) []string {
+	spec := s.Spec()
+	out := make([]string, 0, len(spec.Depends)+len(spec.OptionalDepends))
+	out = append(out, spec.Depends...)
+	out = append(out, spec.OptionalDepends...)
+	return out
 }
 
 // sourceFor returns the source fingerprint for stages that read the media.
@@ -400,8 +440,7 @@ func resolveInputs(
 	planned map[string]*StagePlan,
 	store *artifact.Store,
 ) (planInputs, external map[string]*artifact.Artifact, err error) {
-	spec := s.Spec()
-	deps := append(append([]string(nil), spec.Depends...), spec.OptionalDepends...)
+	deps := dependencies(s)
 	planInputs = make(map[string]*artifact.Artifact, len(deps))
 	external = make(map[string]*artifact.Artifact, len(deps))
 

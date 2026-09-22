@@ -154,25 +154,11 @@ func runStage(
 
 	log := opts.Log.With("stage", spec.Name, "job_id", opts.JobID, "project_id", opts.ProjectID)
 
-	env := &stage.Env{
-		ProjectID:         opts.ProjectID,
-		ProjectDir:        opts.Store.ProjectDir(),
-		JobID:             opts.JobID,
-		Project:           opts.Project,
-		Services:          opts.Services,
-		SourcePath:        opts.SourcePath,
-		Media:             opts.Media,
-		Worker:            opts.Worker,
-		Models:            opts.Models,
-		Config:            opts.Config,
-		Inputs:            inputs,
-		Artifacts:         opts.Store,
-		Progress:          throttled(sp, obs, ctx),
-		Log:               log,
-		Clock:             stage.SystemClock{},
-		SourceFingerprint: opts.SourceFingerprint,
-		StartedAt:         started,
-	}
+	// Built by the same constructor the planner used, so that the fingerprint
+	// computed there is the fingerprint this run writes under.
+	env := stageEnv(opts, inputs, "", throttled(sp, obs, ctx))
+	env.Log = log
+	env.StartedAt = started
 
 	writer, err := opts.Store.Begin(artifact.KeyInputs{
 		Stage:             spec.Name,
