@@ -129,6 +129,24 @@ func (c *Config) Clone() *Config {
 // File layer
 // ---------------------------------------------------------------------------
 
+// ConfigFileFromEnv returns the configuration file named by the environment.
+//
+// Separate from the bindings below because it selects the file rather than
+// setting a value inside it, and separate from the loader because the caller —
+// not this package — decides whether an explicit flag outranks it.
+func ConfigFileFromEnv(environ []string) string {
+	const name = "NIKUCOOKER_CONFIG"
+
+	for _, entry := range environ {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || key != name {
+			continue
+		}
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
 // FileLayer reads a YAML configuration file.
 //
 // A missing file is not an error: the whole point of layered configuration is
@@ -184,7 +202,8 @@ var envBindings = []struct {
 	Kind envKind
 }{
 	// NIKUCOOKER_CONFIG is absent deliberately: it selects the file to read
-	// rather than setting a field, and is handled by ConfigPath.
+	// rather than setting a field, so it cannot be expressed as a path into the
+	// configuration. ConfigFileFromEnv reads it.
 	{"NIKUCOOKER_DATA_DIR", "storage.data_dir", envString},
 	{"NIKUCOOKER_MODEL_DIR", "storage.model_dir", envString},
 	{"NIKUCOOKER_HOST", "server.host", envString},

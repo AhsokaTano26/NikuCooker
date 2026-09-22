@@ -116,14 +116,23 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		opts.Log = slog.Default()
 	}
 
-	fileLayer, err := config.FileLayer(opts.ConfigPath)
-	if err != nil {
-		return nil, err
-	}
-
 	environ := opts.Environ
 	if environ == nil {
 		environ = os.Environ()
+	}
+
+	// A flag beats the environment, and the environment beats the default of no
+	// file at all. The container image sets NIKUCOOKER_CONFIG, so a mounted
+	// configuration has to be found without a flag — but a user who typed
+	// --config meant it.
+	configPath := opts.ConfigPath
+	if configPath == "" {
+		configPath = config.ConfigFileFromEnv(environ)
+	}
+
+	fileLayer, err := config.FileLayer(configPath)
+	if err != nil {
+		return nil, err
 	}
 	envLayer, err := config.EnvLayer(environ)
 	if err != nil {
