@@ -206,3 +206,61 @@ type modelView struct {
 	ErrorMessage   string     `json:"error_message,omitempty"`
 	InstalledAt    *time.Time `json:"installed_at,omitempty"`
 }
+
+// providerView is a configured provider as the interface sees it.
+//
+// The API key is absent, not blanked. A field that is always empty invites the
+// interface to render it and a user to wonder what they did wrong; a field that
+// does not exist cannot be misused. The client sends one only when setting it.
+type providerView struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	Type string `json:"type"`
+
+	BaseURL string `json:"base_url,omitempty"`
+	Model   string `json:"model,omitempty"`
+
+	Enabled bool `json:"enabled"`
+
+	// HasKey reports whether a key is stored, without disclosing it or its
+	// length. It is what lets the interface say "configured" rather than
+	// leaving the user to guess.
+	HasKey bool `json:"has_key"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// providerTestView is the result of checking a provider.
+type providerTestView struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+	Model   string `json:"model,omitempty"`
+}
+
+// settingsView is the resolved configuration and where it came from.
+//
+// Read-only. Settings are edited in the configuration file or the environment,
+// and a UI that wrote them would need to decide precedence between three
+// sources — a decision the file already records, key by key.
+type settingsView struct {
+	// Config is the resolved configuration with secrets removed.
+	Config map[string]any `json:"config"`
+
+	// Provenance says which layer set each key. It is the answer to "I changed
+	// the setting and nothing happened", which is otherwise found by reading
+	// four places and guessing.
+	Provenance map[string]string `json:"provenance"`
+
+	DataDir string `json:"data_dir"`
+}
+
+// logRecordView is one log line.
+type logRecordView struct {
+	Seq   int64          `json:"seq"`
+	Time  time.Time      `json:"time"`
+	Level string         `json:"level"`
+	Msg   string         `json:"msg"`
+	Attrs map[string]any `json:"attrs,omitempty"`
+}

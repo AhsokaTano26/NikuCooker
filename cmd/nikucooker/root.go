@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/app"
+	"github.com/AhsokaTano26/NikuCooker/internal/logging"
 )
 
 const appName = "nikucooker"
@@ -20,6 +21,11 @@ type globals struct {
 	dataDir    string
 	logLevel   string
 	logFormat  string
+
+	// logs retains recent records so the interface can show them. Created once
+	// per command tree and shared with the application, so the logger and the
+	// log endpoint are looking at the same buffer.
+	logs *logging.Buffer
 }
 
 // logger builds the structured logger from the shared flags.
@@ -50,7 +56,14 @@ func (g *globals) logger(cmd *cobra.Command) (*slog.Logger, error) {
 		return nil, fmt.Errorf("invalid --log-format %q: expected text or json", g.logFormat)
 	}
 
-	return slog.New(handler).With("component", "core"), nil
+	if g.logs == nil {
+		g.logs = logging.NewBuffer(logging.DefaultCapacity)
+	}
+
+	// Tee'd into the buffer as well as written to the terminal: stderr is still
+	// where a person looks when the server is not running, and the buffer is
+	// what the interface reads when it is.
+	return slog.New(logging.NewHandler(handler, g.logs)).With("component", "core"), nil
 }
 
 // openApp builds the wired core from the shared flags.
@@ -77,6 +90,7 @@ func (g *globals) openApp(cmd *cobra.Command) (*app.App, error) {
 		Flags:        flags,
 		CodeRevision: currentVersion().CodeRevision,
 		Log:          logger,
+		Logs:         g.logs,
 	})
 }
 

@@ -125,6 +125,17 @@ func (s *Server) buildRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/glossary", s.saveGlossary)
 
 	mux.HandleFunc("GET /api/v1/models", s.listModels)
+	mux.HandleFunc("POST /api/v1/models/{modelID}/download", s.downloadModel)
+	mux.HandleFunc("DELETE /api/v1/models/{modelID}", s.deleteModel)
+
+	mux.HandleFunc("GET /api/v1/providers", s.listProviders)
+	mux.HandleFunc("POST /api/v1/providers", s.createProvider)
+	mux.HandleFunc("PATCH /api/v1/providers/{providerID}", s.updateProvider)
+	mux.HandleFunc("DELETE /api/v1/providers/{providerID}", s.deleteProvider)
+	mux.HandleFunc("POST /api/v1/providers/{providerID}/test", s.testProvider)
+
+	mux.HandleFunc("GET /api/v1/settings", s.getSettings)
+	mux.HandleFunc("GET /api/v1/logs", s.listLogs)
 
 	// Anything else under the API prefix is answered in the API's own shape,
 	// rather than with the HTML the static handler would otherwise return. A

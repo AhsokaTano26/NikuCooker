@@ -577,33 +577,6 @@ func (s *Server) saveGlossary(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// Models
-// ---------------------------------------------------------------------------
-
-func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
-	records, err := s.app.Models.List(r.Context())
-	if err != nil {
-		s.fail(w, classify(err))
-		return
-	}
-
-	views := make([]modelView, 0, len(records))
-	for _, record := range records {
-		views = append(views, modelView{
-			ID: record.ID, Name: record.Name, Kind: string(record.Kind),
-			Status:    string(record.Status),
-			SizeBytes: record.SizeBytes, EstimatedBytes: record.ApproxBytes,
-			Progress: record.Progress, Note: record.Note,
-			ErrorMessage: record.ErrorMessage, InstalledAt: record.InstalledAt,
-		})
-	}
-
-	s.respond(w, http.StatusOK, struct {
-		Items []modelView `json:"items"`
-	}{Items: views})
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

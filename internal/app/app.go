@@ -22,6 +22,7 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/events"
 	"github.com/AhsokaTano26/NikuCooker/internal/glossary"
 	"github.com/AhsokaTano26/NikuCooker/internal/jobs"
+	"github.com/AhsokaTano26/NikuCooker/internal/logging"
 	"github.com/AhsokaTano26/NikuCooker/internal/media"
 	"github.com/AhsokaTano26/NikuCooker/internal/models"
 	"github.com/AhsokaTano26/NikuCooker/internal/pipeline"
@@ -67,6 +68,11 @@ type Options struct {
 	CodeRevision string
 
 	Log *slog.Logger
+
+	// Logs retains recent records for the interface. When nil the application
+	// makes its own, so a caller that does not wire one up — a test — still
+	// gets a working log endpoint rather than a nil dereference.
+	Logs *logging.Buffer
 }
 
 // App is the wired business core.
@@ -96,6 +102,10 @@ type App struct {
 	// nothing subscribed — does not have to construct one.
 	Events *events.Bus
 
+	// Logs is a window of recent log records, so the interface can show them
+	// without the user finding a terminal.
+	Logs *logging.Buffer
+
 	registry *stage.Registry
 
 	// The worker pool is started on first use rather than at construction.
@@ -114,6 +124,11 @@ type App struct {
 func New(ctx context.Context, opts Options) (*App, error) {
 	if opts.Log == nil {
 		opts.Log = slog.Default()
+	}
+
+	logBuffer := opts.Logs
+	if logBuffer == nil {
+		logBuffer = logging.NewBuffer(logging.DefaultCapacity)
 	}
 
 	environ := opts.Environ
@@ -223,6 +238,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		Segments:     segments.NewRepository(db),
 		QC:           qcrepo.NewRepository(db),
 		Events:       events.NewBus(events.DefaultBufferSize),
+		Logs:         logBuffer,
 		registry:     registry,
 	}, nil
 }
