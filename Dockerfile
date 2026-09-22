@@ -69,10 +69,16 @@ FROM python:3.12-slim AS runtime-cpu
 
 ARG AI_EXTRAS=cpu
 
+# fonts-noto-cjk is what the subtitle styles name, and without it a burned-in
+# render produces a screen of empty boxes: FFmpeg and libass succeed, the file
+# plays, and the only way to find out is to watch it. Nothing else here pulls
+# in a CJK font — fontconfig ships with ffmpeg but its font sets do not — so it
+# is a dependency rather than a nicety.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         ca-certificates \
         tini \
+        fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -124,11 +130,14 @@ FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04 AS runtime-cuda
 ARG AI_EXTRAS=cuda
 ARG PYTHON_VERSION=3.12
 
+# fonts-noto-cjk for the same reason as the CPU image: the subtitle styles name
+# it, and a render without it is a screen of boxes.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         ca-certificates \
         tini \
         curl \
+        fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
