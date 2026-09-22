@@ -163,7 +163,10 @@ def test_echo_returns_its_params_unchanged():
 def test_unknown_method_is_reported_not_fatal():
     events = run_worker(
         [
-            {"v": 1, "id": "req_1", "method": "vad.detect", "params": {}},
+            # A method that does not exist, rather than one that does not exist
+            # yet: naming a real-but-unimplemented method makes this test expire
+            # the moment that method lands, which it did once.
+            {"v": 1, "id": "req_1", "method": "definitely.not.a.method", "params": {}},
             {"v": 1, "id": "req_2", "method": "echo", "params": {}},
             {"v": 1, "id": "req_3", "method": "shutdown"},
         ]
@@ -304,6 +307,7 @@ def test_debug_delay_rejects_an_out_of_range_duration():
         ("asr.transcribe", False),
         ("vad.detect", False),
         ("model.load", False),
+        ("definitely.not.a.method", False),
     ],
 )
 def test_method_classification(method: str, control: bool):

@@ -250,13 +250,15 @@ func TestPhase2UnknownMethodIsNamed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err := w.Call(ctx, "vad.detect", map[string]any{"audio_path": "/nonexistent.wav"}, nil)
+	// A method that does not exist, rather than one that does not exist *yet*:
+	// naming a real-but-unimplemented method here makes this test expire the
+	// moment that method lands, which it did once.
+	_, err := w.Call(ctx, "definitely.not.a.method", map[string]any{}, nil)
 	if err == nil {
-		t.Fatal("an unimplemented method returned success")
+		t.Fatal("an unknown method returned success")
 	}
 
-	// The worker must name what is missing rather than pretending or crashing:
-	// vad.detect arrives with the inference providers.
+	// The worker must name what is missing rather than pretending or crashing.
 	if !strings.Contains(err.Error(), "UNSUPPORTED_METHOD") && !strings.Contains(err.Error(), "not implemented") {
 		t.Errorf("error does not identify the missing capability: %v", err)
 	}

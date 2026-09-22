@@ -64,6 +64,17 @@ jobs:
         working-directory: ai
         run: uv sync --frozen
 
+      - name: Cache recognition models
+        # The ASR test needs weights. Caching them keeps the suite fast; a test
+        # that takes minutes of downloading is a test someone disables.
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/nikucooker
+          key: models-tiny-${{ runner.os }}
+
       - name: Vet
         run: go vet ./...
 
