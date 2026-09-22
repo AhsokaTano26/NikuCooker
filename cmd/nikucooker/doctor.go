@@ -214,11 +214,40 @@ func checkFFmpeg(ctx context.Context, app *app.App) check {
 		return check{
 			Name: "ffmpeg", Status: "warn",
 			Detail: detail + "; no libass, so hard subtitles are unavailable",
-			Fix:    "soft subtitles still work; for burned-in subtitles install an FFmpeg built with --enable-libass",
+			Fix:    burnFix(caps.Path),
 		}
 	}
 
 	return check{Name: "ffmpeg", Status: status, Detail: detail + ", can burn subtitles"}
+}
+
+// burnFix says how to get an FFmpeg that can burn subtitles, on the machine
+// asking.
+//
+// "Install a build with --enable-libass" is the true answer everywhere and a
+// usable one almost nowhere: it names a compile flag, not something to
+// install. Worse on macOS, where the advice sounds like a reinstall and is
+// not — Homebrew's formula has no libass dependency at all, so `brew install
+// ffmpeg` produces exactly the binary the user already has.
+func burnFix(ffmpegPath string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		if strings.Contains(ffmpegPath, "/Cellar/ffmpeg/") || strings.Contains(ffmpegPath, "/opt/homebrew/") {
+			return "soft subtitles still work. Homebrew's ffmpeg is built without libass, " +
+				"so reinstalling it changes nothing — either install the tap that has the option " +
+				"(brew trust homebrew-ffmpeg/ffmpeg && brew tap homebrew-ffmpeg/ffmpeg && " +
+				"brew install homebrew-ffmpeg/ffmpeg/ffmpeg --with-libass) and point media.ffmpeg_path at it, " +
+				"or run the container, whose FFmpeg does have it"
+		}
+		return "soft subtitles still work; for burned-in subtitles install an FFmpeg built with --enable-libass"
+
+	case "linux":
+		return "soft subtitles still work. For burned-in subtitles, install a build with libass — " +
+			"Debian and Ubuntu's ffmpeg packages have it, and the container image uses one of those"
+
+	default:
+		return "soft subtitles still work; for burned-in subtitles install an FFmpeg built with --enable-libass"
+	}
 }
 
 func checkPython(ctx context.Context, app *app.App) check {
