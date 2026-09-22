@@ -303,12 +303,19 @@ func (s *Service) Delete(ctx context.Context, id string, deleteFiles bool) error
 // Project IDs are server-generated UUIDs, so a malformed one is either a bug or
 // an attack. Both warrant refusal rather than sanitisation: sanitising a
 // traversal attempt produces a path that exists and is wrong.
+// validateID reports whether a string could be a project identifier.
+//
+// An identifier that is not one cannot name a project that exists, so callers
+// report it as not-found rather than as a malformed request. The distinction
+// matters at the edge: a URL path segment holding a deleted project's id and one
+// holding a typo are the same situation to a client, and answering one with a
+// 400 and the other with a 404 gives it two cases to handle where it has one.
 func validateID(id string) error {
 	if id == "" {
-		return fmt.Errorf("project: empty id")
+		return fmt.Errorf("%w: no id was given", ErrNotFound)
 	}
 	if _, err := uuid.Parse(id); err != nil {
-		return fmt.Errorf("project: %q is not a valid project id", id)
+		return fmt.Errorf("%w: %q is not a project id", ErrNotFound, id)
 	}
 	return nil
 }
@@ -417,28 +424,38 @@ func scaffold(dir string) error {
 // ---------------------------------------------------------------------------
 
 func validateCreate(req CreateRequest) error {
+	return validateFields(req.Name, req.SourceLanguage, req.TargetLanguage, req.Style)
+}
+
+// validateFields checks the project fields that are validated identically
+// whether a project is being created or changed.
+//
+// Shared rather than duplicated, because an update that skipped a rule a create
+// enforces is a way to reach a state the rest of the system assumes is
+// impossible — and it is exactly the rule that would be forgotten.
+func validateFields(name, sourceLanguage, targetLanguage, style string) error {
 	var problems []string
 
-	if strings.TrimSpace(req.Name) == "" {
+	if strings.TrimSpace(name) == "" {
 		problems = append(problems, "name must not be empty")
 	}
-	if req.SourceLanguage == "" {
+	if sourceLanguage == "" {
 		problems = append(problems, "source_language must not be empty")
 	}
-	if req.TargetLanguage == "" {
+	if targetLanguage == "" {
 		problems = append(problems, "target_language must not be empty")
 	}
 	// Translating a language into itself is almost always a mistake, and
 	// catching it here is far cheaper than after a transcription.
-	if req.SourceLanguage != "" && req.SourceLanguage == req.TargetLanguage {
+	if sourceLanguage != "" && sourceLanguage == targetLanguage {
 		problems = append(problems,
-			fmt.Sprintf("source and target language are both %q", req.SourceLanguage))
+			fmt.Sprintf("source and target language are both %q", sourceLanguage))
 	}
-	switch req.Style {
+	switch style {
 	case "literal", "natural", "fansub":
 	default:
 		problems = append(problems,
-			fmt.Sprintf("style %q is not one of literal, natural, fansub", req.Style))
+			fmt.Sprintf("style %q is not one of literal, natural, fansub", style))
 	}
 
 	if len(problems) > 0 {
@@ -464,4 +481,72 @@ func parseTime(raw string) time.Time {
 		return time.Time{}
 	}
 	return ts
+}
+
+// UpdateRequest describes a change to a project. A nil field is left alone.
+type UpdateRequest struct {
+	Name           *string
+	SourceLanguage *string
+	TargetLanguage *string
+	Style          *string
+	Config         map[string]any
+}
+
+// Update applies a change to a project.
+//
+// A nil field is untouched rather than cleared. A PATCH carries only what the
+// caller meant to change, and treating an absent field as "set it to empty"
+// would make every partial update destroy the rest of the record.
+func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (*Project, error) {
+	p, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.Name != nil {
+		p.Name = strings.TrimSpace(*req.Name)
+		if p.Name == "" {
+			return nil, fmt.Errorf("project: a project needs a name")
+		}
+	}
+	if req.SourceLanguage != nil {
+		p.SourceLanguage = *req.SourceLanguage
+	}
+	if req.TargetLanguage != nil {
+		p.TargetLanguage = *req.TargetLanguage
+	}
+	if req.Style != nil {
+		p.Style = *req.Style
+	}
+	if req.Config != nil {
+		p.Config = req.Config
+	}
+
+	if err := validateFields(p.Name, p.SourceLanguage, p.TargetLanguage, p.Style); err != nil {
+		return nil, err
+	}
+
+	configJSON := "{}"
+	if len(p.Config) > 0 {
+		encoded, err := json.Marshal(p.Config)
+		if err != nil {
+			return nil, fmt.Errorf("project: encode config: %w", err)
+		}
+		configJSON = string(encoded)
+	}
+
+	now := time.Now().UTC()
+	_, err = s.db.Write.ExecContext(ctx, `
+		UPDATE projects
+		SET name = ?, source_language = ?, target_language = ?, style = ?,
+		    config_json = ?, updated_at = ?
+		WHERE id = ?`,
+		p.Name, p.SourceLanguage, p.TargetLanguage, p.Style,
+		configJSON, now.Format(time.RFC3339Nano), id)
+	if err != nil {
+		return nil, fmt.Errorf("project: update %s: %w", id, err)
+	}
+
+	p.UpdatedAt = now
+	return p, nil
 }

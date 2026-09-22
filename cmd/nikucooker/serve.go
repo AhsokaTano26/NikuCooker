@@ -26,15 +26,19 @@ The web application is embedded in this binary, so there is nothing else to
 install or point at. The API lives under /api/v1 on the same origin.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			logger, err := g.logger(cmd)
+			application, err := g.openApp(cmd)
 			if err != nil {
 				return err
 			}
+			defer func() { _ = application.Close() }()
 
 			srv, err := server.New(server.Options{
-				Host: host,
-				Port: port,
-				Log:  logger,
+				Host:    host,
+				Port:    port,
+				Log:     application.Logger(),
+				App:     application,
+				Version: currentVersion().Version,
+				Commit:  currentVersion().Commit,
 			})
 			if err != nil {
 				return err
@@ -45,7 +49,7 @@ install or point at. The API lives under /api/v1 on the same origin.`,
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			logger.Info("listening", "addr", srv.Addr(), "version", currentVersion().Version)
+			application.Logger().Info("listening", "addr", srv.Addr(), "version", currentVersion().Version)
 			fmt.Fprintf(cmd.OutOrStdout(), "NikuCooker is serving at http://%s\n", displayAddr(host, port))
 
 			return srv.ListenAndServe(ctx)

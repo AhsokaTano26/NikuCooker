@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/AhsokaTano26/NikuCooker/internal/pipeline"
+
 	"github.com/google/uuid"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/database"
@@ -134,6 +136,36 @@ type StageRun struct {
 
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+// Elapsed reports how long a stage run took, or zero when it never started.
+func (r StageRun) Elapsed() time.Duration {
+	if r.StartedAt == nil || r.FinishedAt == nil {
+		return 0
+	}
+	return r.FinishedAt.Sub(*r.StartedAt)
+}
+
+// Reason explains a stage that did not reach a successful terminal state.
+//
+// Only the states that mean "this stage did not produce output" carry a reason.
+// A completed or cached stage has nothing to explain, and inventing a sentence
+// for it would put noise in the one place a user looks to find out what went
+// wrong.
+func (r StageRun) Reason() string {
+	switch pipeline.State(r.Status) {
+	case pipeline.StateSkipped:
+		if r.ErrorMessage != "" {
+			return r.ErrorMessage
+		}
+		return "this stage was not run"
+	case pipeline.StateFailed:
+		return r.ErrorMessage
+	case pipeline.StateCancelled:
+		return "the run was cancelled"
+	default:
+		return ""
+	}
 }
 
 // Error codes a job can carry.

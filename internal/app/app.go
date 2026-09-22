@@ -9,7 +9,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,11 +16,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/google/uuid"
-
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
 	"github.com/AhsokaTano26/NikuCooker/internal/config"
 	"github.com/AhsokaTano26/NikuCooker/internal/database"
+	"github.com/AhsokaTano26/NikuCooker/internal/events"
 	"github.com/AhsokaTano26/NikuCooker/internal/glossary"
 	"github.com/AhsokaTano26/NikuCooker/internal/jobs"
 	"github.com/AhsokaTano26/NikuCooker/internal/media"
@@ -30,6 +28,8 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/platform"
 	"github.com/AhsokaTano26/NikuCooker/internal/project"
 	"github.com/AhsokaTano26/NikuCooker/internal/provider"
+	qcrepo "github.com/AhsokaTano26/NikuCooker/internal/qc"
+	"github.com/AhsokaTano26/NikuCooker/internal/segments"
 	"github.com/AhsokaTano26/NikuCooker/internal/stage"
 	"github.com/AhsokaTano26/NikuCooker/internal/stage/asr"
 	"github.com/AhsokaTano26/NikuCooker/internal/stage/audio"
@@ -88,6 +88,13 @@ type App struct {
 	Cache     *translationcore.Cache
 	Media     *media.Service
 	Artifacts *artifactStoreFactory
+	Segments  *segments.Repository
+	QC        *qcrepo.Repository
+
+	// Events carries live updates to the UI. It is never nil in a running
+	// server, and emit tolerates it being nil so that a CLI run — which has
+	// nothing subscribed — does not have to construct one.
+	Events *events.Bus
 
 	registry *stage.Registry
 
@@ -204,6 +211,9 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		Cache:        translationcore.NewCache(db),
 		Media:        mediaService,
 		Artifacts:    &artifactStoreFactory{db: db, dataDir: cfg.Storage.DataDir},
+		Segments:     segments.NewRepository(db),
+		QC:           qcrepo.NewRepository(db),
+		Events:       events.NewBus(events.DefaultBufferSize),
 		registry:     registry,
 	}, nil
 }
@@ -236,6 +246,22 @@ func (a *App) DataDir() string { return a.dataDir }
 
 // Registry returns the pipeline definition.
 func (a *App) Registry() *stage.Registry { return a.registry }
+
+// ResolvePython reports the interpreter the worker will be launched with.
+//
+// Exposed for the doctor command and the dashboard, which both need to answer
+// "which Python is this using" without starting one.
+func (a *App) ResolvePython(ctx context.Context) (string, error) {
+	dir, err := a.AIDir()
+	if err != nil {
+		return "", err
+	}
+	return platform.ResolvePython(ctx, platform.ResolveOptions{
+		Explicit:      a.cfg.AI.Python,
+		AIDir:         dir,
+		RequireImport: false,
+	})
+}
 
 // Logger returns the application logger.
 func (a *App) Logger() *slog.Logger { return a.log }
@@ -424,112 +450,40 @@ type RunResult struct {
 	Plan  *pipeline.Plan
 }
 
-// Run executes the pipeline for a project.
+// Run executes the pipeline synchronously, for a caller with nothing else to do.
 //
-// A stage failure is recorded on the plan rather than returned as an error,
-// because one stage failing does not abandon the others — a run whose render
-// failed still produced subtitles, and the user needs to see which is which.
-// The error this returns is for the situations where there is no plan at all:
-// an unknown project, a bad selection, a project already running.
+// The CLI uses this: a user watching a terminal wants the command to block until
+// the work is done. The HTTP API uses Start, which returns immediately and
+// leaves the run to report itself over the event stream.
 func (a *App) Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
-	if opts.ProjectID == "" {
-		return nil, errors.New("app: no project was named")
-	}
-
-	prj, err := a.Projects.Get(ctx, opts.ProjectID)
+	prepared, err := a.prepare(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	jobID := opts.JobID
-	if jobID == "" {
-		jobID = "job_" + uuid.Must(uuid.NewV7()).String()
-	}
-
-	// One job per project at a time. The scheduler owns the constraint because
-	// it is the only thing that can also cancel the run it is guarding.
-	jobCtx, err := a.Scheduler.Begin(ctx, prj.ID, jobID)
-	if err != nil {
-		return nil, err
-	}
-	defer a.Scheduler.Finish(prj.ID)
-
-	cfg, err := a.projectConfig(prj)
+	jobCtx, err := a.Scheduler.Begin(ctx, prepared.ProjectID, prepared.JobID)
 	if err != nil {
 		return nil, err
 	}
 
-	store := a.Artifacts.For(prj.ID)
-	if removed, err := store.SweepTempDirectories(); err != nil {
-		// Housekeeping, not correctness. An abandoned temporary directory is
-		// wasted disk, and failing a run over it would be a poor trade.
-		a.log.Warn("could not sweep abandoned temporary directories", "error", err)
-	} else if removed > 0 {
-		a.log.Debug("swept abandoned temporary directories", "count", removed)
+	job := &jobs.Job{
+		ID:        prepared.JobID,
+		ProjectID: prepared.ProjectID,
+		Kind:      kindFor(opts),
+		Force:     opts.Force,
+		Status:    jobs.StatusPending,
 	}
-
-	sourcePath, err := a.sourcePath(prj)
-	if err != nil {
+	if err := a.Jobs.Create(ctx, job); err != nil {
+		a.Scheduler.Finish(prepared.ProjectID)
 		return nil, err
 	}
 
-	// Resolved from the project's own language settings rather than the global
-	// ones, because the fingerprint decides whether an edit invalidates the
-	// cache and the language is part of what the source *is*.
-	sourceFingerprint, err := artifact.FingerprintSource(sourcePath)
-	if err != nil {
-		return nil, fmt.Errorf("app: identify the source media: %w", err)
-	}
+	// Executed rather than launched: the caller passed an observer for its own
+	// progress display, and it expects this call to return when the work is
+	// done.
+	a.execute(jobCtx, prepared, opts)
 
-	planOpts := pipeline.Options{
-		Registry:  a.registry,
-		Config:    cfg,
-		Store:     store,
-		ProjectID: prj.ID,
-		JobID:     jobID,
-		Project: stage.ProjectInfo{
-			Name:           prj.Name,
-			SourceLanguage: prj.SourceLanguage,
-			TargetLanguage: prj.TargetLanguage,
-			Style:          prj.Style,
-		},
-		Services: stage.Services{
-			Providers:   a.Providers,
-			Glossary:    a.Glossary,
-			Translation: a.Cache,
-		},
-		CodeRevision:      a.codeRevision,
-		SourceFingerprint: sourceFingerprint,
-		SourcePath:        sourcePath,
-		Media:             a.Media,
-		Models:            a.Models,
-		Force:             opts.Force,
-		Only:              opts.Only,
-		FromStage:         opts.FromStage,
-		ToStage:           opts.ToStage,
-		Log:               a.log,
-	}
-
-	plan, err := pipeline.Build(jobCtx, planOpts)
-	if err != nil {
-		return nil, err
-	}
-
-	// The worker is resolved after the plan, so that a run consisting entirely
-	// of cached stages never starts one.
-	if stageNeedsWorker(plan) {
-		pool, err := a.Worker(jobCtx)
-		if err != nil {
-			return nil, err
-		}
-		planOpts.Worker = pool
-	}
-
-	if err := pipeline.Run(jobCtx, plan, planOpts, opts.Observer); err != nil {
-		return &RunResult{JobID: jobID, Plan: plan}, err
-	}
-
-	return &RunResult{JobID: jobID, Plan: plan}, nil
+	return &RunResult{JobID: prepared.JobID, Plan: prepared.plan}, nil
 }
 
 // stageNeedsWorker reports whether any stage in the plan will actually run and

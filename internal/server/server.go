@@ -8,13 +8,15 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/AhsokaTano26/NikuCooker/internal/api"
+	"github.com/AhsokaTano26/NikuCooker/internal/app"
 )
 
 // Options configures the HTTP server.
@@ -22,6 +24,13 @@ type Options struct {
 	Host string
 	Port int
 	Log  *slog.Logger
+
+	// App is the wired business core the API serves.
+	App *app.App
+
+	// Version and Commit are reported by the system endpoint.
+	Version string
+	Commit  string
 }
 
 // Server is the running HTTP surface.
@@ -37,13 +46,30 @@ func New(opts Options) (*Server, error) {
 		opts.Log = slog.Default()
 	}
 
+	if opts.App == nil {
+		return nil, fmt.Errorf("server: the application is required")
+	}
+
 	static, err := newStaticHandler()
 	if err != nil {
 		return nil, fmt.Errorf("server: prepare static assets: %w", err)
 	}
 
+	// The API is mounted at the root and matches its own prefix, so an
+	// unrouted path under /api/v1 gets the API's JSON 404 rather than the
+	// web application's HTML — which a JSON client would have to guess about.
+	api, err := api.New(api.Options{
+		App:     opts.App,
+		Log:     opts.Log,
+		Version: opts.Version,
+		Commit:  opts.Commit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/", apiPending(opts.Log))
+	mux.Handle("/api/v1/", api.Routes())
 	mux.Handle("/", static)
 
 	addr := net.JoinHostPort(opts.Host, fmt.Sprint(opts.Port))
@@ -142,28 +168,3 @@ func securityHeaders(next http.Handler) http.Handler {
 // It returns the documented error envelope (docs/api.md §1.3) rather than a
 // bare 404, so a client written against the spec receives a well-formed
 // response whose code names exactly what is missing.
-func apiPending(log *slog.Logger) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Debug("api request rejected: not implemented", "method", r.Method, "path", r.URL.Path)
-		writeError(w, http.StatusServiceUnavailable, "SYSTEM_API_NOT_IMPLEMENTED",
-			"The HTTP API is not implemented in this build. See docs/roadmap.md.")
-	})
-}
-
-type errorEnvelope struct {
-	Error errorBody `json:"error"`
-}
-
-type errorBody struct {
-	Code    string         `json:"code"`
-	Message string         `json:"message"`
-	Details map[string]any `json:"details,omitempty"`
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(errorEnvelope{
-		Error: errorBody{Code: code, Message: message},
-	})
-}
