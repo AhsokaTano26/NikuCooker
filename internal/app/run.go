@@ -36,14 +36,7 @@ func (a *App) Start(ctx context.Context, opts RunOptions) (*RunResult, error) {
 		return nil, err
 	}
 
-	job := &jobs.Job{
-		ID:        prepared.JobID,
-		ProjectID: prepared.ProjectID,
-		Kind:      kindFor(opts),
-		Force:     opts.Force,
-		Status:    jobs.StatusPending,
-	}
-	if err := a.Jobs.Create(ctx, job); err != nil {
+	if err := a.Jobs.Create(ctx, jobFor(prepared.JobID, prepared.ProjectID, opts)); err != nil {
 		a.Scheduler.Finish(prepared.ProjectID)
 		return nil, err
 	}
@@ -53,12 +46,24 @@ func (a *App) Start(ctx context.Context, opts RunOptions) (*RunResult, error) {
 	return &RunResult{JobID: prepared.JobID, Plan: prepared.plan}, nil
 }
 
-// kindFor reports whether a run covers the whole pipeline or one stage.
-func kindFor(opts RunOptions) jobs.Kind {
-	if len(opts.Only) == 1 {
-		return jobs.KindStage
+// jobFor builds the job record a run is tracked under.
+//
+// One place, because the schema requires a single-stage job to name its stage:
+// `kind = 'stage'` with no `target_stage` is rejected by a CHECK constraint, and
+// building the record in two places would mean remembering that in two places.
+func jobFor(jobID, projectID string, opts RunOptions) *jobs.Job {
+	job := &jobs.Job{
+		ID:        jobID,
+		ProjectID: projectID,
+		Kind:      jobs.KindFull,
+		Force:     opts.Force,
+		Status:    jobs.StatusPending,
 	}
-	return jobs.KindFull
+	if len(opts.Only) == 1 {
+		job.Kind = jobs.KindStage
+		job.TargetStage = opts.Only[0]
+	}
+	return job
 }
 
 // prepared is everything a run needs, resolved and validated.
@@ -186,6 +191,7 @@ func (a *App) execute(ctx context.Context, work *prepared, opts RunOptions) {
 	runErr := pipeline.Run(ctx, work.plan, work.options, fanOut(observer, opts.Observer))
 
 	a.persist(ctx, work, opts)
+	a.pruneCache(ctx)
 
 	status, code, message := jobOutcome(ctx, runErr)
 	// Recorded on a context that is still live: the common cause of a failed
@@ -207,6 +213,30 @@ func (a *App) execute(ctx context.Context, work *prepared, opts RunOptions) {
 	a.log.Info("run finished",
 		"job_id", work.JobID, "project_id", work.ProjectID,
 		"status", status, "elapsed_s", time.Since(started).Seconds())
+}
+
+// pruneCache keeps the translation cache within its configured size.
+//
+// Run at the end of a job rather than on a timer: the cache only grows when a
+// run adds to it, so that is the only moment the bound can be exceeded — and a
+// background sweep would contend with the writer for no reason.
+//
+// Failing is not fatal. A cache above its limit costs disk; a run that fails
+// because housekeeping did is a worse trade.
+func (a *App) pruneCache(ctx context.Context) {
+	limit := a.cfg.Translation.CacheMaxEntries
+	if limit <= 0 {
+		return
+	}
+
+	removed, err := a.Cache.Prune(context.WithoutCancel(ctx), limit)
+	if err != nil {
+		a.log.Warn("could not trim the translation cache", "error", err)
+		return
+	}
+	if removed > 0 {
+		a.log.Info("trimmed the translation cache", "removed", removed, "limit", limit)
+	}
 }
 
 // jobOutcome maps a run's result onto a job status.

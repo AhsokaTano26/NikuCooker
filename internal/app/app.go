@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -431,7 +432,12 @@ func resolveAIDir(cfg *config.Config) (string, error) {
 		if dir == "" {
 			return "", false
 		}
-		tried = append(tried, dir)
+		// Recorded once. The executable and the working directory are the same
+		// when the binary is run from where it sits, and listing the same path
+		// twice reads as a bug in the search rather than as two attempts.
+		if !slices.Contains(tried, dir) {
+			tried = append(tried, dir)
+		}
 		info, err := os.Stat(filepath.Join(dir, "nikucooker_ai"))
 		if err != nil || !info.IsDir() {
 			return "", false
@@ -505,14 +511,7 @@ func (a *App) Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
 		return nil, err
 	}
 
-	job := &jobs.Job{
-		ID:        prepared.JobID,
-		ProjectID: prepared.ProjectID,
-		Kind:      kindFor(opts),
-		Force:     opts.Force,
-		Status:    jobs.StatusPending,
-	}
-	if err := a.Jobs.Create(ctx, job); err != nil {
+	if err := a.Jobs.Create(ctx, jobFor(prepared.JobID, prepared.ProjectID, opts)); err != nil {
 		a.Scheduler.Finish(prepared.ProjectID)
 		return nil, err
 	}
