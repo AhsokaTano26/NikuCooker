@@ -58,6 +58,7 @@ export const EVENT_TYPES = [
   'stage.status',
   'stage.progress',
   'project.updated',
+  'settings.changed',
   'project.deleted',
   'segment.updated',
   'segments.replaced',

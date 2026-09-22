@@ -3,13 +3,13 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 /**
  * Routes and their navigation metadata.
  *
- * `phase` names the roadmap phase that implements each view, so the placeholder
- * can say what is missing rather than leaving a blank screen. See
- * docs/roadmap.md.
+ * `label` is what the sidebar shows; the server localises stage names for the
+ * same reason, so a view added after this file was written still displays
+ * something a person can read.
  */
 export interface NavMeta {
   label: string
-  phase: string
+  /** What the view is for, for a reader of this file. */
   description: string
   /** Shown in the sidebar. `false` for detail views reached from a list. */
   nav: boolean
@@ -22,7 +22,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/DashboardView.vue'),
     meta: {
       label: '总览',
-      phase: 'Phase 7',
       description: '项目统计、主机负载、模型与 AI Worker 状态。',
       nav: true,
     } satisfies NavMeta,
@@ -33,7 +32,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ProjectsView.vue'),
     meta: {
       label: '项目',
-      phase: 'Phase 7',
       description: '项目列表、状态筛选与删除。',
       nav: true,
     } satisfies NavMeta,
@@ -44,7 +42,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/CreateProjectView.vue'),
     meta: {
       label: '新建项目',
-      phase: 'Phase 7',
       description: '上传视频、选择语言对与翻译风格。',
       nav: true,
     } satisfies NavMeta,
@@ -55,7 +52,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ProjectDetailView.vue'),
     meta: {
       label: '项目详情',
-      phase: 'Phase 7',
       description: 'Pipeline 各阶段状态、日志、重试与产物下载。',
       nav: false,
     } satisfies NavMeta,
@@ -66,7 +62,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/SubtitleEditorView.vue'),
     meta: {
       label: '字幕编辑',
-      phase: 'Phase 8',
       description: '播放器、原文与译文对照、时间轴与 QC 面板。',
       nav: false,
     } satisfies NavMeta,
@@ -77,7 +72,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ReviewQueueView.vue'),
     meta: {
       label: '审校队列',
-      phase: 'Phase 8',
       description: '按类别分组的问题字幕，支持批量处理。',
       nav: false,
     } satisfies NavMeta,
@@ -88,7 +82,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ModelsView.vue'),
     meta: {
       label: '模型',
-      phase: 'Phase 7',
       description: '模型清单、下载、删除与磁盘占用。',
       nav: true,
     } satisfies NavMeta,
@@ -99,7 +92,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/ProvidersView.vue'),
     meta: {
       label: '翻译服务',
-      phase: 'Phase 7',
       description: 'OpenAI 兼容端点配置与连通性测试。密钥仅以掩码显示。',
       nav: true,
     } satisfies NavMeta,
@@ -110,7 +102,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/SettingsView.vue'),
     meta: {
       label: '设置',
-      phase: 'Phase 7',
       description: '运行时设置，并显示每一项当前生效的来源。',
       nav: true,
     } satisfies NavMeta,
@@ -121,7 +112,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/SystemView.vue'),
     meta: {
       label: '系统',
-      phase: 'Phase 7',
       description: '能力矩阵与 doctor 诊断结果。',
       nav: true,
     } satisfies NavMeta,
@@ -132,7 +122,6 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('@/views/LogsView.vue'),
     meta: {
       label: '日志',
-      phase: 'Phase 7',
       description: '实时日志与历史检索。',
       nav: true,
     } satisfies NavMeta,

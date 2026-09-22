@@ -308,4 +308,121 @@ export const system = {
   health: (signal?: AbortSignal): Promise<{ status: string }> => request('/system/health', { signal }),
 }
 
-export const api = { projects, run, segments, qc, system }
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+export type ModelStatus = 'missing' | 'downloading' | 'ready' | 'failed'
+
+export interface ModelRecord {
+  id: string
+  name: string
+  kind: string
+  status: ModelStatus
+  size_bytes: number
+  estimated_size_bytes?: number
+  progress: number
+  note?: string
+  error_message?: string
+  installed_at?: string
+}
+
+export const models = {
+  list: (signal?: AbortSignal): Promise<{ items: ModelRecord[] }> =>
+    request('/models', { signal }),
+
+  /**
+   * Starts a download and returns immediately.
+   *
+   * Progress arrives over the event stream as `model.progress`. Holding the
+   * request open for several gigabytes would be killed by any proxy in front of
+   * it, and would give the view nothing to show while it waited.
+   */
+  download: (id: string): Promise<void> => request(`/models/${id}/download`, { method: 'POST' }),
+
+  remove: (id: string): Promise<void> => request(`/models/${id}`, { method: 'DELETE' }),
+}
+
+// ---------------------------------------------------------------------------
+// Providers
+// ---------------------------------------------------------------------------
+
+export interface Provider {
+  id: string
+  name: string
+  kind: 'llm' | 'asr'
+  type: string
+  base_url?: string
+  model?: string
+  enabled: boolean
+  /** Whether a key is stored. The key itself is never sent. */
+  has_key: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ProviderInput {
+  name: string
+  kind: 'llm' | 'asr'
+  type: string
+  base_url: string
+  /** Omitted or empty leaves a stored key alone. */
+  api_key?: string
+  model: string
+  enabled?: boolean
+}
+
+export interface ProviderTestResult {
+  ok: boolean
+  message: string
+  model?: string
+}
+
+export const providers = {
+  list: (signal?: AbortSignal): Promise<{ items: Provider[] }> =>
+    request('/providers', { signal }),
+
+  create: (body: ProviderInput): Promise<Provider> =>
+    request('/providers', { method: 'POST', body }),
+
+  update: (id: string, body: Partial<ProviderInput>): Promise<Provider> =>
+    request(`/providers/${id}`, { method: 'PATCH', body }),
+
+  remove: (id: string): Promise<void> => request(`/providers/${id}`, { method: 'DELETE' }),
+
+  /** Asks the endpoint whether it answers. Catches a bad key before a job does. */
+  test: (id: string): Promise<ProviderTestResult> =>
+    request(`/providers/${id}/test`, { method: 'POST' }),
+}
+
+// ---------------------------------------------------------------------------
+// Settings and logs
+// ---------------------------------------------------------------------------
+
+export interface Settings {
+  config: Record<string, unknown>
+  /** Which layer set each key. The answer to "I changed it and nothing happened". */
+  provenance: Record<string, string>
+  data_dir: string
+}
+
+export interface LogRecord {
+  seq: number
+  time: string
+  level: 'debug' | 'info' | 'warn' | 'error'
+  msg: string
+  attrs?: Record<string, unknown>
+}
+
+export const settings = {
+  get: (signal?: AbortSignal): Promise<Settings> => request('/settings', { signal }),
+}
+
+export const logs = {
+  /** `after` selects records newer than a sequence number, for following the log. */
+  list: (after = 0, limit = 500, signal?: AbortSignal): Promise<{ items: LogRecord[]; seq: number }> =>
+    request('/logs', { query: { after, limit }, signal }),
+}
+
+export const api = { projects, run, segments, qc, system, models, providers, settings, logs }
