@@ -961,6 +961,70 @@ func TestPhase5ContextDocumentReachesThePrompt(t *testing.T) {
 	}
 }
 
+// A single-endpoint setup must work without a database record.
+//
+// The configuration documents base_url and model as a fallback for exactly this
+// case, and a documented setting that does nothing is worse than one that is
+// absent: the user has no way to tell whether they configured it wrong or
+// whether it was never read.
+func TestPhase5InlineProviderConfiguration(t *testing.T) {
+	h := newPhase5Harness(t)
+
+	if _, err := h.db.Write.ExecContext(context.Background(),
+		`DELETE FROM providers`); err != nil {
+		t.Fatalf("remove providers: %v", err)
+	}
+
+	h.cfg.Translation.BaseURL = h.llm.server.URL
+	h.cfg.Translation.APIKey = "inline-key"
+	h.cfg.Translation.Model = "inline-model"
+
+	set := h.run(false)
+
+	if set.CountTranslated() != len(set.Segments) {
+		t.Fatalf("translated %d of %d lines using the inline endpoint",
+			set.CountTranslated(), len(set.Segments))
+	}
+	if h.llm.last().Model != "inline-model" {
+		t.Errorf("model = %q, want the configured inline-model", h.llm.last().Model)
+	}
+}
+
+// Naming a provider in configuration must select that one, not merely require
+// that some provider exists.
+func TestPhase5NamedProviderIsUsed(t *testing.T) {
+	h := newPhase5Harness(t)
+	ctx := context.Background()
+
+	// A second enabled provider, so the choice is genuinely ambiguous unless the
+	// configured name is honoured.
+	other := newFakeLLM(t)
+	if err := provider.NewService(h.db).Save(ctx, &provider.Provider{
+		Name:    "other",
+		Kind:    provider.KindLLM,
+		Type:    provider.TypeOpenAICompatible,
+		BaseURL: other.server.URL,
+		Model:   "other-model",
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("seed second provider: %v", err)
+	}
+
+	h.cfg.Translation.Provider = "fake"
+	set := h.run(false)
+
+	if set.CountTranslated() != len(set.Segments) {
+		t.Fatalf("translated %d of %d lines", set.CountTranslated(), len(set.Segments))
+	}
+	if other.requestCount() != 0 {
+		t.Errorf("the unnamed provider was used %d time(s); the configured name was ignored",
+			other.requestCount())
+	}
+	if h.llm.requestCount() == 0 {
+		t.Error("the configured provider was never called")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Timing
 // ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
@@ -251,16 +252,22 @@ type ModelLocator interface {
 	Resolve(kind string, name string) (string, bool)
 }
 
-// LLM returns a client for the configured language-model provider.
+// LLM returns a client for the language-model provider to translate with.
 //
-// A convenience over Services.Providers for the common case of one enabled
-// provider, and the place the timeout from configuration is applied.
+// Three sources are consulted, in order of specificity:
+//
+//  1. The provider named in configuration — a user who has added several and
+//     named one means that one.
+//  2. The only enabled provider, when there is exactly one. With nothing to
+//     choose between, being asked to choose is friction for no gain.
+//  3. The base URL, key and model in configuration. This is the single-endpoint
+//     setup, and it exists so that a user can translate without first creating a
+//     database record for a service they will never want a second of.
+//
+// Anything else is ambiguous, and an error naming the candidates is more useful
+// than silently picking one.
 func (s Services) LLM(ctx context.Context, cfg *config.Config) (*provider.Client, string, error) {
-	if s.Providers == nil {
-		return nil, "", errors.New("stage: no provider service is available")
-	}
-
-	record, err := s.Providers.Default(ctx, provider.KindLLM)
+	record, name, err := s.resolveLLM(ctx, cfg)
 	if err != nil {
 		return nil, "", err
 	}
@@ -271,7 +278,61 @@ func (s Services) LLM(ctx context.Context, cfg *config.Config) (*provider.Client
 	if err != nil {
 		return nil, "", err
 	}
-	return client, record.Name, nil
+	return client, name, nil
+}
+
+func (s Services) resolveLLM(ctx context.Context, cfg *config.Config) (*provider.Provider, string, error) {
+	if s.Providers == nil {
+		return nil, "", errors.New("stage: no provider service is available")
+	}
+
+	if name := strings.TrimSpace(cfg.Translation.Provider); name != "" {
+		record, err := s.Providers.GetByName(ctx, name, provider.KindLLM)
+		if err != nil {
+			return nil, "", fmt.Errorf("stage: the configured provider %q could not be loaded: %w", name, err)
+		}
+		return record, record.Name, nil
+	}
+
+	record, err := s.Providers.Default(ctx, provider.KindLLM)
+	if err == nil {
+		return record, record.Name, nil
+	}
+
+	// Nothing in the database. Before giving up, try the inline endpoint.
+	inline, inlineErr := inlineProvider(cfg.Translation)
+	if inlineErr != nil {
+		// Neither source is usable. The database's error is the more useful one
+		// unless the inline settings were actually filled in, in which case the
+		// user was clearly trying to use them and its error says why they cannot.
+		if cfg.Translation.BaseURL != "" || cfg.Translation.Model != "" {
+			return nil, "", inlineErr
+		}
+		return nil, "", err
+	}
+	return inline, inline.Name, nil
+}
+
+// inlineProvider builds a provider from the flat configuration keys.
+func inlineProvider(cfg config.Translation) (*provider.Provider, error) {
+	if cfg.BaseURL == "" || cfg.Model == "" {
+		return nil, errors.New(
+			"stage: no language-model provider is configured; add one, or set translation.base_url and translation.model")
+	}
+
+	record := &provider.Provider{
+		Name:    "config",
+		Kind:    provider.KindLLM,
+		Type:    provider.TypeOpenAICompatible,
+		BaseURL: cfg.BaseURL,
+		APIKey:  cfg.APIKey,
+		Model:   cfg.Model,
+		Enabled: true,
+	}
+	if err := record.Validate(); err != nil {
+		return nil, fmt.Errorf("stage: %w", err)
+	}
+	return record, nil
 }
 
 // WorkerPool runs inference requests.
