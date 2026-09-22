@@ -15,6 +15,8 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/media"
 	"github.com/AhsokaTano26/NikuCooker/internal/models"
 	"github.com/AhsokaTano26/NikuCooker/internal/platform"
+	"github.com/AhsokaTano26/NikuCooker/internal/subtitle"
+	"os/exec"
 )
 
 // check is one line of the doctor report.
@@ -116,6 +118,7 @@ func runChecks(cmd *cobra.Command, g *globals) []check {
 	checks = append(checks, checkConfig(application))
 	checks = append(checks, checkDirectories(application))
 	checks = append(checks, checkFFmpeg(ctx, application))
+	checks = append(checks, checkSubtitleFont(ctx, application))
 	checks = append(checks, checkPython(ctx, application))
 	checks = append(checks, checkModels(ctx, application))
 	checks = append(checks, checkProvider(ctx, application))
@@ -220,6 +223,60 @@ func checkFFmpeg(ctx context.Context, app *app.App) check {
 	}
 
 	return check{Name: "ffmpeg", Status: status, Detail: detail + ", can burn subtitles"}
+}
+
+// checkSubtitleFont reports a subtitle font this machine cannot resolve.
+//
+// Its own check because its failure is the quiet one. A missing libass is
+// refused before any encoding starts, with a message naming the setting; a
+// missing *font* is not — FFmpeg and libass both succeed, the file plays, and
+// every subtitle is a row of empty boxes. The only way to find out is to watch
+// the whole thing, by which point the box of boxes is the deliverable.
+func checkSubtitleFont(ctx context.Context, app *app.App) check {
+	preset, err := subtitle.PresetByName(app.Config().Subtitle.Preset)
+	if err != nil {
+		// The preset is validated at startup, so this is unreachable; reporting
+		// it rather than ignoring it keeps the reason visible if that changes.
+		return check{
+			Name: "subtitle font", Status: "warn",
+			Detail: err.Error(),
+			Fix:    "check subtitle.preset",
+		}
+	}
+
+	// fontconfig's lookup, which is the one libass uses. Machines without it —
+	// macOS among them — cannot be asked, and on those there is nothing to
+	// answer with.
+	fcMatch, err := exec.LookPath("fc-match")
+	if err != nil {
+		return check{
+			Name: "subtitle font", Status: "ok",
+			Detail: fmt.Sprintf("%s (fontconfig is not installed, so the lookup cannot be checked)", preset.FontName),
+		}
+	}
+
+	out, err := exec.CommandContext(ctx, fcMatch, "-f", "%{family}", preset.FontName).Output()
+	if err != nil {
+		return check{
+			Name: "subtitle font", Status: "ok",
+			Detail: fmt.Sprintf("%s (fontconfig did not answer)", preset.FontName),
+		}
+	}
+
+	// fc-match answers with its best match rather than failing, so a different
+	// family is how "that one is not installed" reads.
+	resolved := strings.TrimSpace(string(out))
+	if strings.EqualFold(resolved, preset.FontName) {
+		return check{Name: "subtitle font", Status: "ok", Detail: preset.FontName + " (needed to burn subtitles in)"}
+	}
+
+	return check{
+		Name: "subtitle font", Status: "warn",
+		Detail: fmt.Sprintf("%s is not installed; fontconfig offers %q instead", preset.FontName, resolved),
+		Fix: "burned-in subtitles will render as empty boxes. Soft subtitles are unaffected — " +
+			"the font is the player's on those. Install a font matching the name, or set " +
+			"subtitle.preset to a style naming one you have",
+	}
 }
 
 // burnFix says how to get an FFmpeg that can burn subtitles, on the machine
