@@ -20,7 +20,10 @@ import (
 
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
 	"github.com/AhsokaTano26/NikuCooker/internal/config"
+	"github.com/AhsokaTano26/NikuCooker/internal/glossary"
 	"github.com/AhsokaTano26/NikuCooker/internal/media"
+	"github.com/AhsokaTano26/NikuCooker/internal/provider"
+	"github.com/AhsokaTano26/NikuCooker/internal/translation"
 	"github.com/AhsokaTano26/NikuCooker/pkg/protocol"
 )
 
@@ -41,7 +44,21 @@ type Spec struct {
 	// Depends names the stages whose artifacts this one consumes. The pipeline
 	// resolves inputs from these names, so a stage never looks up an artifact by
 	// path or by guessing.
+	//
+	// A missing artifact from one of these makes the stage unrunnable. Where the
+	// input is genuinely optional, use OptionalDepends instead: expressing it as
+	// a hard dependency forces a choice between skipping a stage when an
+	// unrelated one is disabled, and reaching around the artifact system to get
+	// at the data another way.
 	Depends []string
+
+	// OptionalDepends names stages whose artifacts this one uses when they are
+	// available and does without when they are not.
+	//
+	// The stage is responsible for checking whether the input arrived; nothing
+	// guarantees it. An optional dependency that failed or was skipped does not
+	// block this stage, and does not appear in Env.Inputs.
+	OptionalDepends []string
 
 	// Optional stages are excluded from a run when disabled, and the pipeline
 	// renumbers nothing when they are: optional stages own an ordinal in the
@@ -96,6 +113,14 @@ type Env struct {
 	ProjectDir string
 	JobID      string
 
+	// Project carries the project's own facts.
+	//
+	// They are here rather than in Config because they are not settings: the
+	// language a project is in and the style it is translated in are properties
+	// of the work, and a stage that read them from configuration would be
+	// reading a global default and calling it the project's.
+	Project ProjectInfo
+
 	// SourcePath is the absolute path to the project's source media.
 	SourcePath string
 
@@ -117,6 +142,14 @@ type Env struct {
 	// Config is the fully resolved configuration, including this project's
 	// overlay.
 	Config *config.Config
+
+	// Services are shared collaborators that had to be built by the core.
+	//
+	// They arrive constructed because constructing them requires the database,
+	// which a stage cannot reach — that restriction is what keeps project state
+	// in one place. Each is optional; a stage that needs one checks for nil and
+	// explains what is missing rather than dereferencing it.
+	Services Services
 
 	// Inputs holds the upstream artifacts this stage declared in Spec.Depends,
 	// keyed by producer stage name.
@@ -187,9 +220,58 @@ func (e *Env) ReportProgress(fraction float64, message string) {
 // part of the cache key.
 type Result = artifact.Result
 
+// Services are the database-backed collaborators a stage may use.
+type Services struct {
+	// Providers resolves a configured language-model endpoint.
+	Providers *provider.Service
+
+	// Glossary reads the terminology in scope for a project.
+	Glossary *glossary.Service
+
+	// Translation is the line cache, which is global and survives across
+	// projects.
+	Translation *translation.Cache
+}
+
+// ProjectInfo is what a stage needs to know about the project it is serving.
+type ProjectInfo struct {
+	Name string
+
+	// SourceLanguage and TargetLanguage are BCP-47 tags. An empty source
+	// language means the recogniser should detect it.
+	SourceLanguage string
+	TargetLanguage string
+
+	// Style is "literal", "natural" or "fansub".
+	Style string
+}
+
 // ModelLocator resolves a model to its on-disk directory.
 type ModelLocator interface {
 	Resolve(kind string, name string) (string, bool)
+}
+
+// LLM returns a client for the configured language-model provider.
+//
+// A convenience over Services.Providers for the common case of one enabled
+// provider, and the place the timeout from configuration is applied.
+func (s Services) LLM(ctx context.Context, cfg *config.Config) (*provider.Client, string, error) {
+	if s.Providers == nil {
+		return nil, "", errors.New("stage: no provider service is available")
+	}
+
+	record, err := s.Providers.Default(ctx, provider.KindLLM)
+	if err != nil {
+		return nil, "", err
+	}
+
+	client, err := provider.NewClient(record, provider.ClientOptions{
+		Timeout: cfg.Translation.Timeout,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return client, record.Name, nil
 }
 
 // WorkerPool runs inference requests.

@@ -49,12 +49,36 @@ func (r *Registry) validate() error {
 	// Every declared dependency must exist...
 	for _, s := range r.order {
 		spec := s.Spec()
+
+		hard := make(map[string]bool, len(spec.Depends))
+		for _, dep := range spec.Depends {
+			hard[dep] = true
+		}
+
 		for _, dep := range spec.Depends {
 			if _, ok := r.byName[dep]; !ok {
 				return fmt.Errorf("stage %q: depends on %q, which is not registered", spec.Name, dep)
 			}
+		}
+
+		// An optional dependency is deliberately *not* required to be present.
+		// Its absence is the configuration it exists to support: a registry
+		// without the analysis pass is how a user disables it, and rejecting
+		// that would make the whole declaration pointless.
+		for _, dep := range spec.OptionalDepends {
 			if dep == spec.Name {
 				return fmt.Errorf("stage %q: depends on itself", spec.Name)
+			}
+		}
+
+		// Listing a name in both is not an error the executor would notice,
+		// because the hard list is what it checks — which is exactly why it is
+		// worth rejecting here. The declaration would read as optional and
+		// behave as required.
+		for _, dep := range spec.OptionalDepends {
+			if hard[dep] {
+				return fmt.Errorf(
+					"stage %q lists %q as both a required and an optional dependency", spec.Name, dep)
 			}
 		}
 	}
@@ -63,10 +87,19 @@ func (r *Registry) validate() error {
 	// the pipeline a chain the executor can walk in one pass. A dependency
 	// declared after its consumer would mean the executor runs the consumer
 	// with a missing input.
+	//
+	// Optional dependencies are held to the same ordering rule. They may not
+	// arrive, but when they do they must arrive first, and the executor has no
+	// second pass in which to go back for them.
 	seen := map[string]bool{}
 	for _, s := range r.order {
 		spec := s.Spec()
-		for _, dep := range spec.Depends {
+		for _, dep := range append(append([]string(nil), spec.Depends...), spec.OptionalDepends...) {
+			// An optional dependency that is not registered is not a problem
+			// here either; there is no ordering to get wrong.
+			if _, registered := r.byName[dep]; !registered {
+				continue
+			}
 			if !seen[dep] {
 				return fmt.Errorf(
 					"stage %q depends on %q, which is registered later; the dependencies of a stage must come before it",

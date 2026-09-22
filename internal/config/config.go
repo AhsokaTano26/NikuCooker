@@ -138,6 +138,14 @@ type Subtitle struct {
 	// PauseMS splits a line where the gap between words exceeds this.
 	PauseMS int `yaml:"pause_ms"`
 
+	// MinGap is the blank interval left between two consecutive lines, in
+	// seconds.
+	//
+	// Zero would read as a single line whose text changed; a couple of frames is
+	// enough for the eye to register two. It is also the margin a line may not
+	// borrow when it is given more time to be read.
+	MinGap float64 `yaml:"min_gap"`
+
 	Bilingual bool     `yaml:"bilingual"`
 	Formats   []string `yaml:"formats"`
 	Preset    string   `yaml:"preset"`
@@ -323,9 +331,12 @@ func Default() *Config {
 			MaxCharsZH:  24,
 			MaxCharsJA:  32,
 			PauseMS:     300,
-			Bilingual:   false,
-			Formats:     []string{"srt", "ass"},
-			Preset:      "Fansub",
+			// Two frames at 24fps, the smallest gap that reads as two lines
+			// rather than one that changed its text.
+			MinGap:    0.083,
+			Bilingual: false,
+			Formats:   []string{"srt", "ass"},
+			Preset:    "Fansub",
 		},
 		Translation: Translation{
 			Provider:     "",

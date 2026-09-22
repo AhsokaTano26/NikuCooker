@@ -86,9 +86,10 @@ func Run(ctx context.Context, plan *Plan, opts Options, obs Observer) error {
 			continue
 		}
 
-		inputs := make(map[string]*artifact.Artifact, len(sp.Stage.Spec().Depends))
+		spec := sp.Stage.Spec()
+		inputs := make(map[string]*artifact.Artifact, len(spec.Depends)+len(spec.OptionalDepends))
 		missing := ""
-		for _, dep := range sp.Stage.Spec().Depends {
+		for _, dep := range spec.Depends {
 			// A dependency inside this run has just produced its artifact; one
 			// outside it was resolved from the store when the plan was built.
 			if dp, ok := byName[dep]; ok {
@@ -109,6 +110,19 @@ func Run(ctx context.Context, plan *Plan, opts Options, obs Observer) error {
 			sp.Reason = fmt.Sprintf("no artifact for input %q", missing)
 			obs.StageSettled(ctx, sp)
 			continue
+		}
+
+		// Optional inputs are collected only when they exist, and their absence
+		// is never a reason to skip. A stage that declared one is written to
+		// work without it, and Env.Inputs simply will not carry the key.
+		for _, dep := range spec.OptionalDepends {
+			if dp, ok := byName[dep]; ok && dp.Artifact != nil {
+				inputs[dep] = dp.Artifact
+				continue
+			}
+			if a, ok := sp.externalInputs[dep]; ok {
+				inputs[dep] = a
+			}
 		}
 
 		runStage(ctx, sp, opts, inputs, obs)
@@ -142,6 +156,8 @@ func runStage(
 		ProjectID:         opts.ProjectID,
 		ProjectDir:        opts.Store.ProjectDir(),
 		JobID:             opts.JobID,
+		Project:           opts.Project,
+		Services:          opts.Services,
 		SourcePath:        opts.SourcePath,
 		Media:             opts.Media,
 		Worker:            opts.Worker,

@@ -101,6 +101,15 @@ type Options struct {
 	ProjectID string
 	JobID     string
 
+	// Project is handed to every stage. It carries the language pair and style,
+	// which stages need and which are not configuration.
+	Project stage.ProjectInfo
+
+	// Services are the database-backed collaborators stages may use. They are
+	// built by the caller because building them needs the database, which a
+	// stage cannot reach.
+	Services stage.Services
+
 	// CodeRevision participates in every artifact key. It is what stops a
 	// rebuilt binary from serving output produced by an older implementation.
 	CodeRevision string
@@ -344,6 +353,10 @@ func sourceFor(s stage.Stage, opts Options) string {
 // run deliberately leaves upstream stages out, and their artifacts are resolved
 // from the store. Whether one is genuinely missing is unsatisfied's question,
 // not this one's.
+// Optional dependencies are deliberately not consulted. A stage that uses
+// another's output when it is available must still run when that stage failed:
+// translating without the analysis document is worse, not impossible, and
+// failing translation because an unrelated stage broke would be wrong.
 func blockedBy(s stage.Stage, planned map[string]*StagePlan, _ []string) (string, bool) {
 	for _, dep := range s.Spec().Depends {
 		dp, ok := planned[dep]
@@ -376,7 +389,8 @@ func resolveInputs(
 	planned map[string]*StagePlan,
 	store *artifact.Store,
 ) (planInputs, external map[string]*artifact.Artifact, err error) {
-	deps := s.Spec().Depends
+	spec := s.Spec()
+	deps := append(append([]string(nil), spec.Depends...), spec.OptionalDepends...)
 	planInputs = make(map[string]*artifact.Artifact, len(deps))
 	external = make(map[string]*artifact.Artifact, len(deps))
 
@@ -406,6 +420,9 @@ func resolveInputs(
 //
 // A dependency that is merely pending is not unsatisfied: it will run before
 // this stage does.
+// Optional dependencies are never unsatisfied. Their absence is a state the
+// depending stage is written to handle, so reporting it here would turn a
+// supported configuration into a skipped stage.
 func unsatisfied(s stage.Stage, planned map[string]*StagePlan, external map[string]*artifact.Artifact) string {
 	for _, dep := range s.Spec().Depends {
 		dp, inPlan := planned[dep]
