@@ -41,6 +41,14 @@ const (
 	TypeSegmentUpdated   Type = "segment.updated"
 	TypeSegmentsReplaced Type = "segments.replaced"
 
+	// TypeSettingsChanged announces a change to something stored outside a
+	// project: a provider, a global glossary entry, a preference.
+	//
+	// Its own type rather than a reuse of project.updated, which carries a
+	// project identifier this has none of — a client filtering the stream by
+	// project would either miss it or, worse, apply it to the wrong project.
+	TypeSettingsChanged Type = "settings.changed"
+
 	TypeModelProgress Type = "model.progress"
 	TypeLog           Type = "log"
 	TypeWorkerStatus  Type = "worker.status"

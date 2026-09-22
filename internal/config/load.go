@@ -129,6 +129,26 @@ func (c *Config) Clone() *Config {
 // File layer
 // ---------------------------------------------------------------------------
 
+// AsMap renders the configuration as a nested map keyed by its document paths.
+//
+// Through YAML rather than JSON, because the structs carry yaml tags and no json
+// tags: marshalling to JSON would produce Go field names, and the paths in that
+// map would not match the provenance keys — which are the document paths. The
+// two are meant to be joined, and a caller that had to translate between them
+// would get one of them wrong.
+func (c *Config) AsMap() (map[string]any, error) {
+	raw, err := yaml.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("config: encode: %w", err)
+	}
+
+	out := map[string]any{}
+	if err := yaml.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("config: decode: %w", err)
+	}
+	return out, nil
+}
+
 // ConfigFileFromEnv returns the configuration file named by the environment.
 //
 // Separate from the bindings below because it selects the file rather than

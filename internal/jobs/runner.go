@@ -71,6 +71,16 @@ func (s *Scheduler) Cancel(projectID string) bool {
 	return true
 }
 
+// AnyRunning reports whether any project has a job in progress.
+//
+// Used to refuse an action that would break a run in flight — deleting a model
+// a job may be using — rather than discovering the conflict halfway through it.
+func (s *Scheduler) AnyRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.running) > 0
+}
+
 // Running reports the job currently running for a project, if any.
 func (s *Scheduler) Running(projectID string) (string, bool) {
 	s.mu.Lock()
