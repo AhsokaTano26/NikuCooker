@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/api"
 	"github.com/AhsokaTano26/NikuCooker/internal/app"
 	"github.com/AhsokaTano26/NikuCooker/internal/events"
+	"github.com/AhsokaTano26/NikuCooker/internal/logging"
 	"github.com/AhsokaTano26/NikuCooker/internal/project"
 	"github.com/AhsokaTano26/NikuCooker/internal/qc"
 	"github.com/AhsokaTano26/NikuCooker/internal/segments"
@@ -761,5 +763,199 @@ func TestPhase7SegmentOrderingIsWhitelisted(t *testing.T) {
 	// And the table must still exist for a fresh query to succeed at all.
 	if _, _, err := h.app.Segments.List(context.Background(), projectID, segments.ListQuery{}); err != nil {
 		t.Fatalf("the segments table is unusable: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Administration
+// ---------------------------------------------------------------------------
+
+// A stored key must never leave the server, in any form.
+//
+// The one field worth being paranoid about: a key that appears in a response is
+// in the browser's cache, in any proxy log, and in whatever the user pastes into
+// a bug report. `has_key` exists so the interface can say "configured" without
+// the value.
+func TestPhase7ProviderKeysAreNeverReturned(t *testing.T) {
+	h := newAPIHarness(t)
+
+	status, body, raw := h.request("POST", "/api/v1/providers", map[string]any{
+		"name": "secretive", "kind": "llm", "type": "openai-compatible",
+		"base_url": "https://example.invalid/v1",
+		"api_key":  "sk-do-not-print-me",
+		"model":    "some-model",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d: %s", status, raw)
+	}
+
+	if body["has_key"] != true {
+		t.Errorf("the response does not say a key is stored: %v", body)
+	}
+	if strings.Contains(raw, "sk-do-not-print-me") {
+		t.Fatalf("the API key was returned to the client: %s", raw)
+	}
+	if _, present := body["api_key"]; present {
+		t.Errorf("the response carries an api_key field at all: %s", raw)
+	}
+
+	// Nor on a read.
+	_, _, listRaw := h.request("GET", "/api/v1/providers", nil)
+	if strings.Contains(listRaw, "sk-do-not-print-me") {
+		t.Fatalf("the API key was returned by the list endpoint: %s", listRaw)
+	}
+
+	// Nor in the settings dump, which serialises the whole configuration.
+	_, _, settingsRaw := h.request("GET", "/api/v1/settings", nil)
+	if strings.Contains(settingsRaw, "sk-do-not-print-me") {
+		t.Fatalf("the API key was returned by the settings endpoint: %s", settingsRaw)
+	}
+}
+
+// Updating a provider without a key must leave the stored one alone.
+//
+// The interface never receives the key, so it cannot send it back. A save that
+// cleared it would break a working configuration every time someone renamed a
+// provider.
+func TestPhase7UpdatingAProviderKeepsItsKey(t *testing.T) {
+	h := newAPIHarness(t)
+	ctx := context.Background()
+
+	status, body, raw := h.request("POST", "/api/v1/providers", map[string]any{
+		"name": "keeper", "kind": "llm", "type": "openai-compatible",
+		"base_url": "https://example.invalid/v1",
+		"api_key":  "sk-original",
+		"model":    "some-model",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d: %s", status, raw)
+	}
+
+	id, _ := body["id"].(string)
+	if id == "" {
+		t.Fatalf("the created provider has no id: %s", raw)
+	}
+
+	// A rename, with no key field — which is what the interface sends.
+	if status, _, raw := h.request("PATCH", "/api/v1/providers/"+id,
+		map[string]any{"name": "renamed"}); status != http.StatusOK {
+		t.Fatalf("status = %d: %s", status, raw)
+	}
+
+	stored, err := h.app.Providers.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "renamed" {
+		t.Errorf("the rename did not take: %q", stored.Name)
+	}
+	if stored.APIKey != "sk-original" {
+		t.Errorf("the key was cleared by a rename: %q", stored.APIKey)
+	}
+	if stored.Model != "some-model" {
+		t.Errorf("a field the request did not mention was cleared: %q", stored.Model)
+	}
+}
+
+// The settings endpoint must show where each value came from.
+//
+// It is the answer to "I changed the setting and nothing happened", which is
+// otherwise found by reading four places and guessing.
+func TestPhase7SettingsReportProvenance(t *testing.T) {
+	h := newAPIHarness(t)
+
+	status, body, raw := h.request("GET", "/api/v1/settings", nil)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %s", status, raw)
+	}
+
+	config, ok := body["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings carries no config: %s", raw)
+	}
+	if _, ok := config["asr"]; !ok {
+		t.Fatalf("the config is not keyed by its document paths: %s", raw)
+	}
+
+	provenance, ok := body["provenance"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings carries no provenance: %s", raw)
+	}
+
+	// The harness sets the data directory through a flag, so its provenance
+	// must say so rather than reporting the default.
+	if got := provenance["storage.data_dir"]; got != "cli" {
+		t.Errorf("storage.data_dir came from %v, want cli", got)
+	}
+	// And something nobody set must be attributed to the defaults.
+	if got := provenance["log.level"]; got != "default" {
+		t.Errorf("log.level came from %v, want default", got)
+	}
+}
+
+// The log endpoint must return records, and only new ones when asked.
+func TestPhase7LogsAreIncremental(t *testing.T) {
+	h := newAPIHarness(t)
+
+	if h.app.Logs == nil {
+		t.Fatal("the harness wired no log buffer")
+	}
+
+	h.app.Logs.Add(logging.Record{Level: "info", Msg: "first"})
+	h.app.Logs.Add(logging.Record{Level: "warn", Msg: "second"})
+
+	status, body, raw := h.request("GET", "/api/v1/logs", nil)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %s", status, raw)
+	}
+
+	items, _ := body["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("expected two records, got %s", raw)
+	}
+
+	seq, ok := body["seq"].(float64)
+	if !ok || seq < 2 {
+		t.Fatalf("the response reports no cursor: %s", raw)
+	}
+
+	// Asking for everything after the cursor must return nothing, which is what
+	// makes following the log a request a second rather than a full refetch.
+	_, followBody, followRaw := h.request("GET",
+		"/api/v1/logs?after="+strconv.Itoa(int(seq)), nil)
+
+	followed, _ := followBody["items"].([]any)
+	if len(followed) != 0 {
+		t.Errorf("a follow-up returned %d records, want none: %s", len(followed), followRaw)
+	}
+
+	h.app.Logs.Add(logging.Record{Level: "error", Msg: "third"})
+
+	_, nextBody, _ := h.request("GET",
+		"/api/v1/logs?after="+strconv.Itoa(int(seq)), nil)
+	next, _ := nextBody["items"].([]any)
+	if len(next) != 1 {
+		t.Errorf("expected only the new record, got %d", len(next))
+	}
+}
+
+// An unknown model must be reported in the API's own shape.
+func TestPhase7UnknownModelIsNotFound(t *testing.T) {
+	h := newAPIHarness(t)
+
+	status, body, raw := h.request("POST", "/api/v1/models/definitely-not-a-model/download", nil)
+
+	if status != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", status, raw)
+	}
+	if code := errorCode(body); code != "NOT_FOUND" {
+		t.Errorf("code = %q: %s", code, raw)
+	}
+
+	// The message must list what does exist, or the user cannot fix their typo.
+	nested, _ := body["error"].(map[string]any)
+	message, _ := nested["message"].(string)
+	if !strings.Contains(message, "tiny") {
+		t.Errorf("the error does not name the available models: %q", message)
 	}
 }
