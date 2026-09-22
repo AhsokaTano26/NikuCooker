@@ -185,7 +185,19 @@ func runStage(
 		if abortErr := writer.Abort(abortCtx); abortErr != nil {
 			log.Error("recording the failed artifact also failed", "error", abortErr)
 		}
-		settle(sp, failureState(ctx, runErr), nil, runErr, started, obs, ctx)
+
+		// Written to the log, not only to the stage's state. A failure this
+		// stage knows the reason for is the one thing a user reads the log to
+		// find, and without this the log of a failed run ends at the last thing
+		// the stage said before it went wrong — which reads as a run that
+		// stopped mid-sentence, with the explanation nowhere.
+		state := failureState(ctx, runErr)
+		if state == StateFailed {
+			log.Error("stage failed",
+				"error", runErr, "duration_ms", time.Since(started).Milliseconds())
+		}
+
+		settle(sp, state, nil, runErr, started, obs, ctx)
 		return
 	}
 
@@ -196,7 +208,9 @@ func runStage(
 		if abortErr := writer.Abort(context.WithoutCancel(ctx)); abortErr != nil {
 			log.Error("recording the failed artifact also failed", "error", abortErr)
 		}
-		settle(sp, StateFailed, nil, fmt.Errorf("stage %q returned no result and no error", spec.Name), started, obs, ctx)
+		bug := fmt.Errorf("stage %q returned no result and no error", spec.Name)
+		log.Error("stage failed", "error", bug)
+		settle(sp, StateFailed, nil, bug, started, obs, ctx)
 		return
 	}
 

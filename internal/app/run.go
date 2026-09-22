@@ -223,7 +223,7 @@ func (a *App) execute(ctx context.Context, work *prepared, opts RunOptions) {
 	a.publishOutputs(ctx, work.ProjectID)
 	a.pruneCache(ctx)
 
-	status, code, message := jobOutcome(ctx, runErr)
+	status, code, message := jobOutcome(ctx, runErr, work.plan)
 	// Recorded on a context that is still live: the common cause of a failed
 	// run is a cancellation, and a cancelled context cannot write the row that
 	// tells the user it was cancelled.
@@ -305,15 +305,37 @@ func (a *App) pruneCache(ctx context.Context) {
 }
 
 // jobOutcome maps a run's result onto a job status.
-func jobOutcome(ctx context.Context, runErr error) (jobs.Status, string, string) {
+//
+// The plan is consulted as well as the returned error, because the executor
+// reports a stage's failure on that stage rather than returning it. A run whose
+// render failed returns no error at all — the stages that could run did, and
+// their artifacts are real — so judging by the returned error alone records it
+// as completed, and the job list then says a run succeeded while the video it
+// exists to produce is missing.
+//
+// This is the rule the CLI applies to decide its exit code, deliberately: a
+// script and the interface reading the same run must not disagree about whether
+// it worked.
+func jobOutcome(ctx context.Context, runErr error, plan *pipeline.Plan) (jobs.Status, string, string) {
 	switch {
-	case runErr == nil:
-		return jobs.StatusCompleted, "", ""
 	case errors.Is(runErr, context.Canceled) || ctx.Err() != nil:
 		return jobs.StatusCancelled, "CANCELLED", "the run was cancelled"
-	default:
+	case runErr != nil:
 		return jobs.StatusFailed, "RUN_FAILED", runErr.Error()
 	}
+
+	for _, sp := range plan.Stages {
+		name := sp.Stage.Spec().Name
+		switch {
+		case sp.Err != nil:
+			return jobs.StatusFailed, "STAGE_FAILED", fmt.Sprintf("%s: %v", name, sp.Err)
+		case sp.Blocked:
+			// Not an error the pipeline raised, but the run did not do what it
+			// was asked: a stage that was selected could not run.
+			return jobs.StatusFailed, "STAGE_BLOCKED", fmt.Sprintf("%s: %s", name, sp.Reason)
+		}
+	}
+	return jobs.StatusCompleted, "", ""
 }
 
 // persist writes the run's output into the project's rows.
