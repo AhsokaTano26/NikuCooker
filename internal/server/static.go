@@ -71,15 +71,14 @@ func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	file, err := h.root.Open(path)
 	if err != nil {
-		// Not a real file: hand it to the client router.
-		h.serveIndex(w, r)
+		h.notFound(w, r, path)
 		return
 	}
 	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	if err != nil || stat.IsDir() {
-		h.serveIndex(w, r)
+		h.notFound(w, r, path)
 		return
 	}
 
@@ -87,6 +86,28 @@ func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		_, _ = io.Copy(w, file)
 	}
+}
+
+// notFound answers a path with no file behind it.
+//
+// The client router gets the document, because /projects/01J8ZP is a route the
+// server knows nothing about and a hard refresh there must work. Anything under
+// /assets is the opposite case: every file there is emitted by the build with a
+// content hash in its name, so one that is missing was deleted by a newer
+// build — and answering it with index.html is worse than answering nothing.
+//
+// It is worse because of what the browser does with it. The response is HTML
+// with X-Content-Type-Options: nosniff, so a pending `import()` rejects instead
+// of executing it, and the rejection surfaces wherever the caller happened to
+// be. For a route's lazy chunk that is a navigation that silently does nothing:
+// the user clicks, the URL may not even change, and no error appears anywhere.
+// A 404 says the same thing in a form that can be acted on.
+func (h *staticHandler) notFound(w http.ResponseWriter, r *http.Request, path string) {
+	if strings.HasPrefix(path, "assets/") {
+		http.Error(w, "no such asset; this build does not contain it", http.StatusNotFound)
+		return
+	}
+	h.serveIndex(w, r)
 }
 
 func (h *staticHandler) serveIndex(w http.ResponseWriter, r *http.Request) {
