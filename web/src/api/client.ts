@@ -428,6 +428,36 @@ export const providers = {
 // Settings and logs
 // ---------------------------------------------------------------------------
 
+/** One editable setting, as the server describes it. */
+export interface SettingDescriptor {
+  key: string
+  name: string
+  help: string
+  group: string
+
+  kind: 'bool' | 'int' | 'float' | 'string' | 'enum' | 'list' | 'bytes'
+  options?: { value: string; label: string }[]
+
+  unit?: string
+  min?: number
+  max?: number
+  step?: number
+
+  advanced: boolean
+
+  /** The value in effect right now, after every layer. */
+  value: unknown
+
+  /** The layer that set it: default, config_file, environment, database,
+   *  project or cli. */
+  source: string
+
+  /** Whether the database holds a value, which is what makes reset meaningful.
+   *  Not derivable from source being "database": a key set to the value the
+   *  default already had still has a row. */
+  overridden: boolean
+}
+
 export interface Settings {
   config: Record<string, unknown>
   /** Which layer set each key. The answer to "I changed it and nothing happened". */
@@ -437,6 +467,9 @@ export interface Settings {
    *  missing file is not an error, but it does mean a change has nowhere to go. */
   config_path: string
   config_file_exists: boolean
+  /** Every setting the interface may change. A key absent from it is readable
+   *  here and editable only in the configuration file. */
+  catalog: SettingDescriptor[]
 }
 
 export interface LogRecord {
@@ -449,6 +482,18 @@ export interface LogRecord {
 
 export const settings = {
   get: (signal?: AbortSignal): Promise<Settings> => request('/settings', { signal }),
+
+  /** Stores values and returns the settings as they now stand.
+   *
+   *  The whole response rather than nothing, because a save re-resolves the
+   *  configuration: the values that come back are the ones in effect, which is
+   *  what the form should show rather than what was sent. */
+  update: (values: Record<string, unknown>): Promise<Settings> =>
+    request('/settings', { method: 'PATCH', body: { values } }),
+
+  /** Drops one override, returning the key to the layers underneath. */
+  reset: (key: string): Promise<void> =>
+    request(`/settings/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 }
 
 // ---------------------------------------------------------------------------

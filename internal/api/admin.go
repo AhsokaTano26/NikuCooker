@@ -364,26 +364,7 @@ func (s *Server) testProvider(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
-	config := redactedConfig(s.app.Config())
-
-	provenance := map[string]string{}
-	for key, source := range s.app.Provenance() {
-		provenance[key] = string(source)
-	}
-
-	// A key no layer set is showing its default, and saying so is the whole
-	// point of this endpoint. Leaving it absent would make every client
-	// reimplement the same rule — and the one that forgets shows "not set" for
-	// a value that is working perfectly.
-	fillDefaults(config, "", provenance)
-
-	s.respond(w, http.StatusOK, settingsView{
-		Config:           config,
-		Provenance:       provenance,
-		DataDir:          s.app.DataDir(),
-		ConfigPath:       s.app.ConfigPath(),
-		ConfigFileExists: s.app.ConfigFileExists(),
-	})
+	s.respond(w, http.StatusOK, s.settingsResponse(r))
 }
 
 func (s *Server) listLogs(w http.ResponseWriter, r *http.Request) {

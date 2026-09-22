@@ -12,6 +12,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -488,6 +489,13 @@ func (c *Config) ResolvePaths() error {
 	return nil
 }
 
+// ErrInvalid reports a configuration the user can correct.
+//
+// A sentinel so that callers can tell it from a failure to read a file or to
+// reach the database: this one is a message, not a fault, and it should reach
+// the person who typed the value rather than a log file.
+var ErrInvalid = errors.New("invalid configuration")
+
 // Validate rejects a configuration that would fail later and less clearly.
 //
 // Every message names the offending key and the expected form: a startup error
@@ -610,5 +618,5 @@ func (c *Config) Validate() error {
 	if len(problems) == 0 {
 		return nil
 	}
-	return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
+	return fmt.Errorf("%w:\n  - %s", ErrInvalid, strings.Join(problems, "\n  - "))
 }

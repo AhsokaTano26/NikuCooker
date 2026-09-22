@@ -225,7 +225,7 @@ func (a *App) execute(ctx context.Context, work *prepared, opts RunOptions) {
 // Failing is not fatal. A cache above its limit costs disk; a run that fails
 // because housekeeping did is a worse trade.
 func (a *App) pruneCache(ctx context.Context) {
-	limit := a.cfg.Translation.CacheMaxEntries
+	limit := a.Config().Translation.CacheMaxEntries
 	if limit <= 0 {
 		return
 	}

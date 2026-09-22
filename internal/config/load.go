@@ -17,11 +17,12 @@ import (
 type Source string
 
 const (
-	SourceDefault Source = "default"
-	SourceFile    Source = "config_file"
-	SourceEnv     Source = "environment"
-	SourceProject Source = "project"
-	SourceCLI     Source = "cli"
+	SourceDefault  Source = "default"
+	SourceFile     Source = "config_file"
+	SourceEnv      Source = "environment"
+	SourceDatabase Source = "database"
+	SourceProject  Source = "project"
+	SourceCLI      Source = "cli"
 )
 
 // Provenance records which layer last set each configuration key.

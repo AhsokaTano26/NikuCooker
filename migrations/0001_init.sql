@@ -366,10 +366,21 @@ CREATE UNIQUE INDEX idx_models_kind_name ON model_records(kind, name);
 -- Settings
 -- ---------------------------------------------------------------------------
 
--- Only what the web UI changes at runtime and what must survive a restart.
--- Configuration a user edits by hand lives in the config file, and the file
--- wins for anything both can express — otherwise a user edits YAML, sees no
--- effect, and has no way to discover that a database row is overriding them.
+-- What the web interface changes at runtime, and what must survive a restart.
+--
+-- Above the configuration file and the environment, below a project overlay
+-- and a command-line flag. The ordering was originally the other way round,
+-- on the reasoning that a hand-edited YAML file should not be silently
+-- overridden by a database row. It was changed because of who ends up doing
+-- the editing: a file only exists if someone created one, and the person the
+-- interface is for never did. A setting they can see and change is not
+-- silently overridden by anything — the page shows each key's source — while
+-- a file that quietly wins is a setting the interface appears to accept and
+-- does not.
+--
+-- The interface is authoritative for the keys it offers. A key it does not
+-- offer — where the data lives, which FFmpeg to run — still belongs to the
+-- file, because those are properties of the install rather than of a run.
 CREATE TABLE settings (
     key        TEXT PRIMARY KEY,
     value_json TEXT NOT NULL,

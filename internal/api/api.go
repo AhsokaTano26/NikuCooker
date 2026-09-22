@@ -23,12 +23,14 @@ import (
 
 	"github.com/AhsokaTano26/NikuCooker/internal/app"
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
+	"github.com/AhsokaTano26/NikuCooker/internal/config"
 	"github.com/AhsokaTano26/NikuCooker/internal/glossary"
 	"github.com/AhsokaTano26/NikuCooker/internal/jobs"
 	"github.com/AhsokaTano26/NikuCooker/internal/pipeline"
 	"github.com/AhsokaTano26/NikuCooker/internal/project"
 	"github.com/AhsokaTano26/NikuCooker/internal/provider"
 	"github.com/AhsokaTano26/NikuCooker/internal/segments"
+	"github.com/AhsokaTano26/NikuCooker/internal/settings"
 )
 
 // Options configures the API.
@@ -145,6 +147,8 @@ func (s *Server) buildRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/providers/{providerID}/test", s.testProvider)
 
 	mux.HandleFunc("GET /api/v1/settings", s.getSettings)
+	mux.HandleFunc("PATCH /api/v1/settings", s.updateSettings)
+	mux.HandleFunc("DELETE /api/v1/settings/{key}", s.deleteSetting)
 	mux.HandleFunc("GET /api/v1/logs", s.listLogs)
 
 	// Anything else under the API prefix is answered in the API's own shape,
@@ -279,6 +283,18 @@ func classify(err error) *Error {
 		return Invalid(strings.TrimPrefix(err.Error(), "segments: invalid: "))
 	case errors.Is(err, glossary.ErrNotFound):
 		return NotFound("glossary entry")
+	case errors.Is(err, config.ErrInvalid):
+		// A value the configuration rejected. The message names the key and
+		// what is wrong with it, which is exactly what the form should show.
+		return Invalid(strings.TrimPrefix(err.Error(), "config: "))
+	case errors.Is(err, settings.ErrUnknownKey), errors.Is(err, settings.ErrInvalidValue):
+		// A request the user can fix, and the message is written to be read by
+		// them: it names the key and what was wrong with the value.
+		return Invalid(strings.TrimPrefix(err.Error(), "settings: "))
+	case errors.Is(err, provider.ErrNotFound):
+		// Missing rather than by design: deleting a provider that is already
+		// gone is a 404, not the 500 that a sentinel nobody mapped produces.
+		return NotFound("provider")
 	case errors.Is(err, project.ErrUploadNotFound):
 		// A malformed id reaches here as well as a missing one, and they are
 		// deliberately not distinguished: an id that was never issued and an id

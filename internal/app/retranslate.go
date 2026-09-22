@@ -31,7 +31,7 @@ func (a *App) RetranslateLine(ctx context.Context, projectID, segmentID, style s
 		return nil, err
 	}
 
-	client, providerName, err := a.stageServices().LLM(ctx, a.cfg)
+	client, providerName, err := a.stageServices().LLM(ctx, a.Config())
 	if err != nil {
 		return nil, fmt.Errorf("retranslate: %w", err)
 	}
@@ -40,7 +40,7 @@ func (a *App) RetranslateLine(ctx context.Context, projectID, segmentID, style s
 		style = prj.Style
 	}
 	if style == "" {
-		style = a.cfg.Translation.Style
+		style = a.Config().Translation.Style
 	}
 
 	// The line's neighbours travel with it. A line translated in isolation
@@ -69,7 +69,7 @@ func (a *App) RetranslateLine(ctx context.Context, projectID, segmentID, style s
 		return nil, fmt.Errorf("retranslate: %w", err)
 	}
 
-	cfg := a.cfg.Translation
+	cfg := a.Config().Translation
 	outcome, err := translator.Translate(ctx, []*subtitle.Segment{segment}, translationcore.Options{
 		SourceLanguage:  record.SourceLanguage,
 		TargetLanguage:  record.TargetLanguage,

@@ -176,3 +176,94 @@ func TestPublishingIsIdempotent(t *testing.T) {
 		}
 	}
 }
+
+// A stored setting reaches the resolved configuration, with its type intact.
+//
+// The value makes two trips — JSON into the database and back, then YAML into
+// the config struct — and each one is a place a whole number can become a
+// float and an int field can then refuse it. Asserting on the config rather
+// than on the stored row is what catches that.
+func TestSettingsReachTheConfiguration(t *testing.T) {
+	application, _ := outputsHarness(t)
+	ctx := context.Background()
+
+	if err := application.UpdateSettings(ctx, map[string]any{
+		"asr.model":        "large-v3",
+		"subtitle.max_cps": 22,
+		"subtitle.formats": []any{"srt"},
+		"vad.enabled":      false,
+	}); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	cfg := application.Config()
+	if cfg.ASR.Model != "large-v3" {
+		t.Errorf("asr.model = %q", cfg.ASR.Model)
+	}
+	if cfg.Subtitle.MaxCPS != 22 {
+		t.Errorf("subtitle.max_cps = %v, want 22", cfg.Subtitle.MaxCPS)
+	}
+	if len(cfg.Subtitle.Formats) != 1 || cfg.Subtitle.Formats[0] != "srt" {
+		t.Errorf("subtitle.formats = %v", cfg.Subtitle.Formats)
+	}
+	if cfg.VAD.Enabled {
+		t.Error("vad.enabled was ignored")
+	}
+
+	// The provenance says where it came from, which is what the settings page
+	// shows beside each field.
+	if source := application.Provenance()["asr.model"]; source != "database" {
+		t.Errorf("asr.model came from %q, want database", source)
+	}
+}
+
+// A value the configuration rejects is not stored.
+//
+// The failure this prevents is a permanent one: the database is read at
+// startup, so a value stored there that the configuration refuses is a server
+// that will not start — and the settings page that would clear it needs the
+// server.
+func TestAnInvalidSettingIsNotStored(t *testing.T) {
+	application, _ := outputsHarness(t)
+	ctx := context.Background()
+
+	// Empty passes the catalog's own checks and fails the configuration's.
+	if err := application.UpdateSettings(ctx, map[string]any{"render.modes": []any{}}); err == nil {
+		t.Fatal("an empty render.modes was accepted")
+	}
+
+	stored, err := application.Settings.All(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("stored = %#v, want nothing", stored)
+	}
+
+	// And the running configuration is untouched.
+	if len(application.Config().Render.Modes) == 0 {
+		t.Error("the live configuration was left with no render modes")
+	}
+}
+
+// Clearing a setting puts the lower layers back in charge.
+func TestClearingASettingRestoresTheDefault(t *testing.T) {
+	application, _ := outputsHarness(t)
+	ctx := context.Background()
+
+	before := application.Config().Subtitle.MaxCPS
+
+	if err := application.UpdateSettings(ctx, map[string]any{"subtitle.max_cps": 33}); err != nil {
+		t.Fatal(err)
+	}
+	if application.Config().Subtitle.MaxCPS != 33 {
+		t.Fatal("the setting did not take effect")
+	}
+
+	if err := application.ClearSetting(ctx, "subtitle.max_cps"); err != nil {
+		t.Fatal(err)
+	}
+	if got := application.Config().Subtitle.MaxCPS; got != before {
+		t.Errorf("subtitle.max_cps = %v after the reset, want %v", got, before)
+	}
+}

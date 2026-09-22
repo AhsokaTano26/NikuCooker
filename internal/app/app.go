@@ -9,6 +9,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
@@ -33,6 +35,7 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/provider"
 	qcrepo "github.com/AhsokaTano26/NikuCooker/internal/qc"
 	"github.com/AhsokaTano26/NikuCooker/internal/segments"
+	"github.com/AhsokaTano26/NikuCooker/internal/settings"
 	"github.com/AhsokaTano26/NikuCooker/internal/stage"
 	"github.com/AhsokaTano26/NikuCooker/internal/stage/asr"
 	"github.com/AhsokaTano26/NikuCooker/internal/stage/audio"
@@ -71,22 +74,59 @@ type Options struct {
 
 	Log *slog.Logger
 
+	// LogLevel is the logger's threshold, held by the caller so that changing
+	// it in the interface takes effect without a restart. Nil means the logger
+	// is fixed for the process, which is what a test wants.
+	LogLevel *slog.LevelVar
+
 	// Logs retains recent records for the interface. When nil the application
 	// makes its own, so a caller that does not wire one up — a test — still
 	// gets a working log endpoint rather than a nil dereference.
 	Logs *logging.Buffer
 }
 
+// resolved is the configuration and where each of its values came from.
+//
+// One value rather than two fields because they are read together — the
+// settings endpoint joins every key to its source — and a reader that got the
+// new configuration with the previous provenance would report a setting as
+// coming from the file when it came from the browser.
+type resolved struct {
+	cfg  *config.Config
+	prov config.Provenance
+}
+
 // App is the wired business core.
 type App struct {
-	cfg        *config.Config
-	provenance config.Provenance
-	db         *database.DB
-	log        *slog.Logger
+	// config holds the resolved configuration. It is replaced wholesale when a
+	// setting changes, so it is read through an atomic rather than a plain
+	// field: the HTTP handlers read it on their own goroutines while a job
+	// reads it on another, and a bare pointer swap would be a data race.
+	//
+	// A snapshot is immutable once published. A run takes its own clone when it
+	// starts, so a setting changed mid-run applies to the next one and cannot
+	// alter the artifact keys of the one in flight.
+	config atomic.Pointer[resolved]
+
+	db  *database.DB
+	log *slog.Logger
 
 	codeRevision string
 	dataDir      string
 	configPath   string
+
+	// The inputs the layer stack is rebuilt from when a setting changes. Kept
+	// because a reload has to re-read the file — it may have been edited since
+	// — and the environment and flags have not changed.
+	environ []string
+	flags   map[string]any
+
+	// logLevel is the logger's threshold, held so that changing it at runtime
+	// takes effect. The alternative is a restart to turn on debug output, which
+	// is exactly the moment a restart is least welcome.
+	logLevel *slog.LevelVar
+
+	Settings *settings.Service
 
 	Projects  *project.Service
 	Uploads   *project.Uploads
@@ -151,38 +191,12 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		configPath = config.DefaultPath
 	}
 
-	fileLayer, err := config.FileLayer(configPath)
+	// The database needs a data directory, and the directory comes from the
+	// configuration, so the first resolution happens before the settings that
+	// live in the database can be read. It is redone below, with them, and the
+	// cost is one extra file read at startup.
+	cfg, _, err := resolveConfig(ctx, configPath, environ, opts.Flags, nil)
 	if err != nil {
-		return nil, err
-	}
-	envLayer, err := config.EnvLayer(environ)
-	if err != nil {
-		return nil, err
-	}
-
-	layers := []config.Layer{fileLayer, envLayer}
-	if len(opts.Flags) > 0 {
-		layers = append(layers, config.Layer{Source: config.SourceCLI, Data: opts.Flags})
-	}
-
-	cfg, provenance, err := config.Load(layers...)
-	if err != nil {
-		return nil, err
-	}
-
-	// Before anything derives a path from the configuration. A relative
-	// data_dir would otherwise be resolved differently by the Python worker,
-	// whose working directory is its own, and every artifact path handed across
-	// that boundary would point at nothing.
-	if err := cfg.ResolvePaths(); err != nil {
-		return nil, err
-	}
-
-	// Before anything derives a path from the configuration. A relative
-	// data_dir would otherwise be resolved differently by the Python worker,
-	// whose working directory is its own, and every artifact path handed across
-	// that boundary would point at nothing.
-	if err := cfg.ResolvePaths(); err != nil {
 		return nil, err
 	}
 
@@ -242,13 +256,15 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	}
 
 	application := &App{
-		cfg:          cfg,
-		provenance:   provenance,
 		db:           db,
 		log:          opts.Log,
 		codeRevision: opts.CodeRevision,
 		dataDir:      cfg.Storage.DataDir,
 		configPath:   configPath,
+		environ:      environ,
+		flags:        opts.Flags,
+		logLevel:     opts.LogLevel,
+		Settings:     settings.NewService(db),
 		Projects:     project.NewService(db, cfg.Storage.DataDir),
 		Uploads:      project.NewUploads(cfg.Storage.DataDir),
 		Glossary:     glossary.NewService(db),
@@ -270,9 +286,200 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	// is only created by a user walking away, and the moment to notice is when
 	// someone comes back. A ticker would be a goroutine and a lifetime to
 	// manage for work that happens at most once per few hours.
+	// Read again now that the database exists, so that anything the interface
+	// has stored is in effect from the first request rather than only after the
+	// first settings change.
+	if err := application.reloadConfig(ctx); err != nil {
+		// A stored setting the configuration rejects would otherwise be fatal,
+		// and permanently so: the server would never start again and the
+		// interface that would clear the value needs the server. Started
+		// without the stored settings instead, so that the settings page loads
+		// and the value can be reset, with the problem named.
+		opts.Log.Error("a stored setting is not valid and has been left out; "+
+			"reset it in the settings page or remove the row from the settings table",
+			"error", err)
+
+		cfg, provenance, fallbackErr := resolveConfig(ctx, configPath, environ, opts.Flags, nil)
+		if fallbackErr != nil {
+			_ = db.Close()
+			return nil, fallbackErr
+		}
+		application.publish(cfg, provenance)
+	}
+
 	application.sweepUploads()
 
 	return application, nil
+}
+
+// resolveConfig builds the configuration from every layer, lowest first.
+//
+// One function for startup and for every reload, because a reload that
+// assembled the layers in a different order — or forgot one — would produce a
+// running configuration that disagrees with the one a restart produces, and
+// the difference would only show up as a setting that works until the next
+// restart and then stops.
+//
+// overrides is the database layer, and is nil before the database is open.
+func resolveConfig(
+	ctx context.Context,
+	configPath string,
+	environ []string,
+	flags map[string]any,
+	overrides map[string]any,
+) (*config.Config, config.Provenance, error) {
+	fileLayer, err := config.FileLayer(configPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	envLayer, err := config.EnvLayer(environ)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	layers := []config.Layer{
+		fileLayer,
+		envLayer,
+		// Above the environment, below the project overlay: a person changing
+		// a setting in the browser is being more specific than a shell that
+		// exported it once, and less specific than an override attached to the
+		// project they are working on.
+		{Source: config.SourceDatabase, Data: overrides},
+	}
+	if len(flags) > 0 {
+		layers = append(layers, config.Layer{Source: config.SourceCLI, Data: flags})
+	}
+
+	cfg, provenance, err := config.Load(layers...)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Before anything derives a path from the configuration. A relative
+	// data_dir would otherwise be resolved differently by the Python worker,
+	// whose working directory is its own, and every artifact path handed across
+	// that boundary would point at nothing.
+	if err := cfg.ResolvePaths(); err != nil {
+		return nil, nil, err
+	}
+
+	_ = ctx
+	return cfg, provenance, nil
+}
+
+// UpdateSettings stores settings and republishes the configuration.
+//
+// One method rather than two because the two are one operation: a stored value
+// that the running configuration has not picked up is a setting the user has
+// changed and cannot see the effect of, which is the state this whole feature
+// exists to remove.
+func (a *App) UpdateSettings(ctx context.Context, values map[string]any) error {
+	if a.Settings == nil {
+		return errors.New("app: settings are not available")
+	}
+
+	stored, err := a.Settings.All(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Resolved before anything is written. A value the configuration rejects —
+	// an empty render.modes, say — must not reach the database, because the
+	// database is read at startup: a rejected value stored there is a server
+	// that will not restart, and the interface that would fix it needs the
+	// server running.
+	cfg, provenance, err := resolveConfig(ctx, a.configPath, a.environ, a.flags,
+		settings.Merge(stored, values))
+	if err != nil {
+		return err
+	}
+
+	if err := a.Settings.Set(ctx, values); err != nil {
+		return err
+	}
+
+	a.publish(cfg, provenance)
+	return nil
+}
+
+// ClearSetting removes one override and republishes the configuration.
+func (a *App) ClearSetting(ctx context.Context, key string) error {
+	if a.Settings == nil {
+		return errors.New("app: settings are not available")
+	}
+
+	stored, err := a.Settings.All(ctx)
+	if err != nil {
+		return err
+	}
+
+	cfg, provenance, err := resolveConfig(ctx, a.configPath, a.environ, a.flags,
+		settings.Without(stored, key))
+	if err != nil {
+		return err
+	}
+
+	if err := a.Settings.Delete(ctx, key); err != nil {
+		return err
+	}
+
+	a.publish(cfg, provenance)
+	return nil
+}
+
+// reloadConfig re-resolves the configuration and publishes it.
+//
+// Readings in flight keep the snapshot they already loaded, and a run that has
+// started keeps the clone it took, so this changes what happens next rather
+// than what is happening. That is the whole reason editing a setting does not
+// need a restart.
+func (a *App) reloadConfig(ctx context.Context) error {
+	var overrides map[string]any
+	if a.Settings != nil {
+		stored, err := a.Settings.All(ctx)
+		if err != nil {
+			return err
+		}
+		overrides = stored
+	}
+
+	cfg, provenance, err := resolveConfig(ctx, a.configPath, a.environ, a.flags, overrides)
+	if err != nil {
+		return err
+	}
+
+	a.publish(cfg, provenance)
+	return nil
+}
+
+// publish makes a resolved configuration the one in effect.
+func (a *App) publish(cfg *config.Config, provenance config.Provenance) {
+	a.config.Store(&resolved{cfg: cfg, prov: provenance})
+
+	// The logger was built before the configuration existed, so its threshold
+	// is applied here instead of being baked into the handler at construction.
+	if a.logLevel != nil {
+		a.logLevel.Set(slogLevel(cfg.Log.Level))
+	}
+}
+
+// slogLevel maps a configured level name onto slog's.
+//
+// An unrecognized name falls back to info rather than erroring: the level is a
+// diagnostic convenience, and refusing to start over a misspelled one would be
+// out of proportion. Validate reports it separately, which is where a typo is
+// caught.
+func slogLevel(name string) slog.Level {
+	switch name {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 // uploadRetention is how long an upload waits to become a project.
@@ -302,7 +509,7 @@ func (a *App) sweepUploads() {
 // Close releases the resources an App holds.
 func (a *App) Close() error {
 	if a.worker != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), a.cfg.Worker.ShutdownTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), a.Config().Worker.ShutdownTimeout)
 		defer cancel()
 		_ = a.worker.Shutdown(ctx)
 	}
@@ -313,10 +520,10 @@ func (a *App) Close() error {
 }
 
 // Config returns the resolved configuration.
-func (a *App) Config() *config.Config { return a.cfg }
+func (a *App) Config() *config.Config { return a.config.Load().cfg }
 
 // Provenance returns which layer set each configuration key.
-func (a *App) Provenance() config.Provenance { return a.provenance }
+func (a *App) Provenance() config.Provenance { return a.config.Load().prov }
 
 // DB exposes the database, for callers that need a query the services do not
 // offer.
@@ -365,7 +572,7 @@ func (a *App) ResolvePython(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return platform.ResolvePython(ctx, platform.ResolveOptions{
-		Explicit:      a.cfg.AI.Python,
+		Explicit:      a.Config().AI.Python,
 		AIDir:         dir,
 		RequireImport: false,
 	})
@@ -424,7 +631,7 @@ func (a *App) Worker(ctx context.Context) (*worker.Pool, error) {
 		// Resolved against the package directory, which is what makes the
 		// virtual environment beside it discoverable.
 		python, err := platform.ResolvePython(ctx, platform.ResolveOptions{
-			Explicit:      a.cfg.AI.Python,
+			Explicit:      a.Config().AI.Python,
 			AIDir:         dir,
 			RequireImport: true,
 		})
@@ -440,17 +647,17 @@ func (a *App) Worker(ctx context.Context) (*worker.Pool, error) {
 		if version, err := platform.Version(ctx, python); err != nil {
 			a.workerErr = err
 			return
-		} else if constraint, err := platform.ParseConstraint(a.cfg.AI.PythonVersion); err != nil {
+		} else if constraint, err := platform.ParseConstraint(a.Config().AI.PythonVersion); err != nil {
 			a.workerErr = err
 			return
 		} else if !constraint.IsEmpty() && !constraint.Allows(version) {
 			a.workerErr = fmt.Errorf(
 				"app: the AI worker needs Python %s but %s is %s",
-				a.cfg.AI.PythonVersion, python, version)
+				a.Config().AI.PythonVersion, python, version)
 			return
 		}
 
-		args := a.cfg.AI.Args
+		args := a.Config().AI.Args
 		if len(args) == 0 {
 			args = []string{"-m", "nikucooker_ai"}
 		}
@@ -461,12 +668,12 @@ func (a *App) Worker(ctx context.Context) (*worker.Pool, error) {
 			Dir:              dir,
 			SchemaDigest:     digest,
 			CodeRevision:     a.codeRevision,
-			StartupTimeout:   a.cfg.Worker.StartupTimeout,
-			ShutdownTimeout:  a.cfg.Worker.ShutdownTimeout,
-			ModelLoadTimeout: a.cfg.Worker.ModelLoadTimeout,
-			StallTimeout:     a.cfg.Worker.StallTimeout,
+			StartupTimeout:   a.Config().Worker.StartupTimeout,
+			ShutdownTimeout:  a.Config().Worker.ShutdownTimeout,
+			ModelLoadTimeout: a.Config().Worker.ModelLoadTimeout,
+			StallTimeout:     a.Config().Worker.StallTimeout,
 			Log:              a.log,
-		}, a.cfg.Worker.PoolSize)
+		}, a.Config().Worker.PoolSize)
 	})
 	if a.workerErr != nil {
 		return nil, a.workerErr
@@ -481,7 +688,7 @@ func (a *App) Worker(ctx context.Context) (*worker.Pool, error) {
 // it differently from the thing it was diagnosing would be worse than none.
 func (a *App) AIDir() (string, error) {
 	a.aiDirOnce.Do(func() {
-		a.aiDir, a.aiDirErr = resolveAIDir(a.cfg)
+		a.aiDir, a.aiDirErr = resolveAIDir(a.Config())
 	})
 	return a.aiDir, a.aiDirErr
 }
@@ -620,7 +827,7 @@ func stageNeedsWorker(plan *pipeline.Plan) bool {
 
 // projectConfig resolves the global configuration with a project's overlay.
 func (a *App) projectConfig(prj *project.Project) (*config.Config, error) {
-	cfg := a.cfg.Clone()
+	cfg := a.Config().Clone()
 	if len(prj.Config) == 0 {
 		return cfg, nil
 	}

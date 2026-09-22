@@ -122,6 +122,11 @@ type systemFeatures struct {
 	// goes" is what a user needs in order to change a setting.
 	ConfigPath       string `json:"config_path"`
 	ConfigFileExists bool   `json:"config_file_exists"`
+
+	// Catalog is every setting the interface may change, each with its value in
+	// effect and the layer that set it. A key absent from it is readable here
+	// and editable only in the configuration file.
+	Catalog []settingView `json:"catalog"`
 }
 
 type systemCounts struct {
@@ -294,6 +299,11 @@ type settingsView struct {
 	// nowhere to write a change, and the interface has to be able to say so.
 	ConfigPath       string `json:"config_path"`
 	ConfigFileExists bool   `json:"config_file_exists"`
+
+	// Catalog is every setting the interface may change, each with its value in
+	// effect and the layer that set it. A key absent from it is readable here
+	// and editable only in the configuration file.
+	Catalog []settingView `json:"catalog"`
 }
 
 // logRecordView is one log line.

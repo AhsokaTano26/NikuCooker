@@ -26,6 +26,12 @@ type globals struct {
 	// per command tree and shared with the application, so the logger and the
 	// log endpoint are looking at the same buffer.
 	logs *logging.Buffer
+
+	// level is the logger's threshold, held rather than fixed so that changing
+	// log.level in the interface takes effect on the running process. Turning
+	// on debug output is something a user does while something is going wrong,
+	// which is exactly when a restart is least welcome.
+	level slog.LevelVar
 }
 
 // logger builds the structured logger from the shared flags.
@@ -43,8 +49,11 @@ func (g *globals) logger(cmd *cobra.Command) (*slog.Logger, error) {
 	default:
 		return nil, fmt.Errorf("invalid --log-level %q: expected debug, info, warn or error", g.logLevel)
 	}
+	g.level.Set(level)
 
-	opts := &slog.HandlerOptions{Level: level}
+	// The variable rather than the value: the handler consults it per record,
+	// so a later change reaches output that is already flowing.
+	opts := &slog.HandlerOptions{Level: &g.level}
 
 	var handler slog.Handler
 	switch g.logFormat {
@@ -90,6 +99,7 @@ func (g *globals) openApp(cmd *cobra.Command) (*app.App, error) {
 		Flags:        flags,
 		CodeRevision: currentVersion().CodeRevision,
 		Log:          logger,
+		LogLevel:     &g.level,
 		Logs:         g.logs,
 	})
 }
