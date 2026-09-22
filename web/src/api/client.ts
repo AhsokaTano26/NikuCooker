@@ -146,8 +146,16 @@ export interface ProjectOutput {
   name: string
   size_bytes: number
   modified_at: string
-  /** A coarse label to group by: subtitle, video, other. */
+  /** A coarse label to group by: subtitle, video, log, other. */
   kind: 'subtitle' | 'video' | 'other' | 'log'
+
+  /** What the file is and what it is for.
+   *
+   *  From the server, because the answer depends on the file in ways a name
+   *  does not show: .ass and .srt are both subtitles and are not
+   *  interchangeable, and the two .mkv files differ in a way that only appears
+   *  when one is played. */
+  description: string
 }
 
 export type FileGroupKind = 'source' | 'artifacts' | 'output' | 'logs'

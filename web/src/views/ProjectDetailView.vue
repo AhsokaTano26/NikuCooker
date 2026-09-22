@@ -367,9 +367,15 @@ const STATUS_LABEL: Record<StageStatus, string> = {
           >
             <div class="min-w-0">
               <p class="truncate text-sm">{{ file.name }}</p>
-              <p class="text-xs text-ink-faint">
+              <p class="mt-0.5 text-xs text-ink-faint">
                 {{ KIND_LABEL[file.kind] }} · {{ formatBytes(file.size_bytes) }} ·
                 {{ formatTime(file.modified_at) }}
+              </p>
+              <!-- What the file is, in the user's terms. The two videos differ
+                   in a way their names do not show, and picking the wrong one
+                   is discovered by watching it. -->
+              <p v-if="file.description" class="mt-1 text-xs text-ink-muted">
+                {{ file.description }}
               </p>
             </div>
             <a

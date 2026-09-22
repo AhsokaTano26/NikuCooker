@@ -20,10 +20,46 @@ type outputView struct {
 	SizeBytes  int64     `json:"size_bytes"`
 	ModifiedAt time.Time `json:"modified_at"`
 
-	// Kind is a coarse label the interface groups by: subtitle, video, other.
-	// Derived from the extension rather than from the stage that wrote it,
-	// because that is what a person deciding what to download is looking at.
+	// Kind is a coarse label the interface groups by: subtitle, video, log,
+	// other. Derived from the extension rather than from the stage that wrote
+	// it, because that is what a person deciding what to download is looking at.
 	Kind string `json:"kind"`
+
+	// Description says what the file is and what it is for.
+	//
+	// Sent from here rather than written into the frontend because the answer
+	// depends on the file: an .ass and an .srt are both "subtitles" and are not
+	// interchangeable, and the two .mkv files differ in a way that only shows
+	// when someone plays one. The server knows which is which; a client
+	// matching on filename patterns would be a second implementation of that
+	// knowledge, free to drift.
+	Description string `json:"description"`
+}
+
+// describe says what a published file is, in the user's terms.
+//
+// Matched on the name because that is all a published file has: the stage that
+// wrote it is not recorded on it, and the names are ours — the subtitle stage
+// writes subs.<format> and the render stage writes <project>.nikucooker[.hardsub].mkv.
+func describe(name string) string {
+	lower := strings.ToLower(name)
+
+	switch {
+	case strings.HasSuffix(lower, ".hardsub.mkv"):
+		return "字幕已经画进画面，任何播放器都关不掉。文件更大，因为整片重新编码过。"
+	case strings.HasSuffix(lower, ".nikucooker.mkv"):
+		return "字幕是独立轨道，播放器里可以开关或换字体。视频流是直接复制的，没有重新编码。"
+	case strings.HasSuffix(lower, ".mkv"), strings.HasSuffix(lower, ".mp4"), strings.HasSuffix(lower, ".webm"):
+		return "带字幕的视频。"
+	case strings.HasSuffix(lower, ".ass"):
+		return "带样式的字幕：字体、字号、描边、位置都在文件里。渲染阶段用的就是这份。"
+	case strings.HasSuffix(lower, ".srt"):
+		return "最通用的字幕格式，几乎所有播放器都能读，但不带样式。"
+	case strings.HasSuffix(lower, ".vtt"):
+		return "网页字幕格式，适合在浏览器里播放。"
+	default:
+		return ""
+	}
 }
 
 func (s *Server) listOutputs(w http.ResponseWriter, r *http.Request) {
@@ -50,10 +86,11 @@ func (s *Server) listOutputs(w http.ResponseWriter, r *http.Request) {
 	views := make([]outputView, 0, len(files))
 	for _, file := range files {
 		views = append(views, outputView{
-			Name:       file.Name,
-			SizeBytes:  file.SizeBytes,
-			ModifiedAt: file.ModifiedAt,
-			Kind:       outputKind(file.Name),
+			Name:        file.Name,
+			SizeBytes:   file.SizeBytes,
+			ModifiedAt:  file.ModifiedAt,
+			Kind:        outputKind(file.Name),
+			Description: describe(file.Name),
 		})
 	}
 
@@ -123,6 +160,8 @@ func outputKind(name string) string {
 		return "subtitle"
 	case ".mkv", ".mp4", ".webm":
 		return "video"
+	case ".log":
+		return "log"
 	default:
 		return "other"
 	}

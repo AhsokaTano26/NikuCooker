@@ -64,6 +64,7 @@ func (s *Server) listProjectFiles(w http.ResponseWriter, r *http.Request) {
 		logViews = append(logViews, outputView{
 			Name: file.Name, SizeBytes: file.SizeBytes,
 			ModifiedAt: file.ModifiedAt, Kind: "log",
+			Description: "这一次运行的完整记录，包括每个阶段说了什么。",
 		})
 	}
 
