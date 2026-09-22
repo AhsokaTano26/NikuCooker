@@ -109,50 +109,52 @@ async function remove(project: Project): Promise<void> {
       <RouterLink to="/projects/new" class="text-accent hover:underline">创建一个</RouterLink>
     </div>
 
-    <table v-else-if="projects.data.value" class="w-full border-collapse text-sm">
-      <thead>
-        <tr class="border-b border-line text-left text-xs text-ink-faint">
-          <th class="py-2 pr-4 font-medium">名称</th>
-          <th class="py-2 pr-4 font-medium">语言对</th>
-          <th class="py-2 pr-4 font-medium">风格</th>
-          <th class="py-2 pr-4 font-medium">时长</th>
-          <th class="py-2 pr-4 font-medium">状态</th>
-          <th class="py-2 font-medium"></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="project in projects.data.value.items"
-          :key="project.id"
-          class="border-b border-line/60 transition hover:bg-surface-raised"
-        >
-          <td class="py-2 pr-4">
-            <RouterLink :to="`/projects/${project.id}`" class="hover:text-accent">
-              {{ project.name }}
-            </RouterLink>
-          </td>
-          <td class="py-2 pr-4 text-ink-muted">
-            {{ project.source_language }} → {{ project.target_language }}
-          </td>
-          <td class="py-2 pr-4 text-ink-muted">{{ project.style }}</td>
-          <td class="py-2 pr-4 tabular-nums text-ink-muted">{{ formatDuration(project.duration) }}</td>
-          <td class="py-2 pr-4">
-            <span class="text-ink-muted">{{ stageLabel(project) }}</span>
-            <!--
-              The review count is shown only when it is non-zero. A permanent
-              "0 待审校" column trains people to stop reading it.
-            -->
-            <span v-if="project.needs_review_count > 0" class="ml-2 text-status-running">
-              {{ project.needs_review_count }} 待审校
-            </span>
-          </td>
-          <td class="py-2 text-right">
-            <button class="text-xs text-ink-faint transition hover:text-status-failed" @click="remove(project)">
-              删除
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <div v-else-if="projects.data.value" class="overflow-x-auto rounded border border-line">
+      <table class="w-full border-collapse text-sm">
+        <thead>
+          <tr class="border-b border-line text-left text-xs text-ink-faint">
+            <th class="px-3 py-2 font-medium">名称</th>
+            <th class="px-3 py-2 font-medium">语言对</th>
+            <th class="px-3 py-2 font-medium">风格</th>
+            <th class="px-3 py-2 font-medium">时长</th>
+            <th class="px-3 py-2 font-medium">状态</th>
+            <th class="px-3 py-2 font-medium"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="project in projects.data.value.items"
+            :key="project.id"
+            class="border-b border-line/60 transition hover:bg-surface-raised"
+          >
+            <td class="px-3 py-2">
+              <RouterLink :to="`/projects/${project.id}`" class="hover:text-accent">
+                {{ project.name }}
+              </RouterLink>
+            </td>
+            <td class="px-3 py-2 text-ink-muted">
+              {{ project.source_language }} → {{ project.target_language }}
+            </td>
+            <td class="px-3 py-2 text-ink-muted">{{ project.style }}</td>
+            <td class="px-3 py-2 tabular-nums text-ink-muted">{{ formatDuration(project.duration) }}</td>
+            <td class="px-3 py-2">
+              <span class="text-ink-muted">{{ stageLabel(project) }}</span>
+              <!--
+                The review count is shown only when it is non-zero. A permanent
+                "0 待审校" column trains people to stop reading it.
+              -->
+              <span v-if="project.needs_review_count > 0" class="ml-2 text-status-running">
+                {{ project.needs_review_count }} 待审校
+              </span>
+            </td>
+            <td class="px-3 py-2 text-right">
+              <button class="text-xs text-ink-faint transition hover:text-status-failed" @click="remove(project)">
+                删除
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </template>

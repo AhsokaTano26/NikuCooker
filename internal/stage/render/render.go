@@ -74,21 +74,27 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 		return nil, fmt.Errorf("render: %w", err)
 	}
 
-	outputName, err := outputName(env.Project.Name, info.HasVideo())
+	base, err := outputBase(env.Project.Name, info.HasVideo())
 	if err != nil {
 		return nil, err
 	}
-	outputPath := filepath.Join(env.OutDir, outputName)
 
-	mode := media.RenderMode(env.Config.Render.Mode)
-	if mode != media.RenderSoft && mode != media.RenderHard {
-		return nil, fmt.Errorf("render: %q is not a render mode; use soft or hard", env.Config.Render.Mode)
+	modes, err := renderModes(env.Config.Render.Modes)
+	if err != nil {
+		return nil, err
 	}
 
-	if mode == media.RenderHard && !info.HasVideo() {
-		return nil, errors.New(
-			"render: the source has no video stream, so there is nothing to burn subtitles into; " +
-				"set render.mode to soft, or disable the render stage")
+	// Every requested mode is checked before any of them renders.
+	//
+	// Checked up front rather than as each one comes round, because an artifact
+	// is published as a unit: discovering on the second mode that it cannot be
+	// done would abort the artifact and discard the first one's output. A user
+	// who asked for two versions, one of which is impossible on this machine,
+	// would then get neither — and nothing on screen saying which was the
+	// problem.
+	caps, err := s.capabilities(ctx, env, modes)
+	if err != nil {
+		return nil, err
 	}
 
 	subtitleDir, err := env.Artifacts.Dir(env.Inputs["subtitle"])
@@ -96,59 +102,87 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 		return nil, fmt.Errorf("render: %w", err)
 	}
 
-	subtitleFile, err := pickSubtitle(manifest, mode, outputName)
-	if err != nil {
-		return nil, err
-	}
-	subtitlePath := filepath.Join(subtitleDir, subtitleFile)
+	subtitleLines := 0
+	outputs := make([]outputRecord, 0, len(modes))
+	warnings := []string{}
 
-	options, err := s.options(ctx, env, mode)
-	if err != nil {
-		return nil, err
-	}
+	for i, mode := range modes {
+		outputName := outputName(base, mode)
+		outputPath := filepath.Join(env.OutDir, outputName)
 
-	env.Log.Info("rendering",
-		"mode", mode, "output", outputName,
-		"subtitles", subtitleFile, "encoder", options.Encoder, "duration_s", info.Duration)
+		if mode == media.RenderHard && !info.HasVideo() {
+			return nil, errors.New(
+				"render: the source has no video stream, so there is nothing to burn subtitles into; " +
+					"set render.modes to [soft], or disable the render stage")
+		}
 
-	warnings, err := env.Media.Render(ctx, env.SourcePath, subtitlePath, outputPath, options, info.Duration,
-		func(fraction float64, message string) {
-			env.ReportProgress(fraction, message)
+		subtitleFile, err := pickSubtitle(manifest, mode, outputName)
+		if err != nil {
+			return nil, err
+		}
+		subtitlePath := filepath.Join(subtitleDir, subtitleFile)
+
+		options := s.options(env, mode, caps)
+
+		env.Log.Info("rendering",
+			"mode", mode, "output", outputName,
+			"subtitles", subtitleFile, "encoder", options.Encoder, "duration_s", info.Duration)
+
+		// The progress bar spans every output, so with two of them it reaches
+		// halfway after the first rather than filling and starting over — which
+		// reads as a stage that finished and then ran again.
+		span := 1 / float64(len(modes))
+		stageWarnings, err := env.Media.Render(ctx, env.SourcePath, subtitlePath, outputPath, options, info.Duration,
+			func(fraction float64, message string) {
+				env.ReportProgress(float64(i)*span+fraction*span, message)
+			})
+		if err != nil {
+			return nil, fmt.Errorf("render: %w", err)
+		}
+
+		// Warnings are things that worked but not as the user probably intended
+		// — styling dropped by the container, a hardware encoder that fell back
+		// to software. They are logged because the alternative is the user
+		// discovering them on playback.
+		for _, warning := range stageWarnings {
+			env.Log.Warn(warning)
+		}
+		warnings = append(warnings, stageWarnings...)
+
+		stat, err := os.Stat(outputPath)
+		if err != nil {
+			return nil, fmt.Errorf("render: reported success but wrote no output: %w", err)
+		}
+
+		if file, ok := manifest.FileFor(fileFormatFor(subtitleFile)); ok {
+			subtitleLines = file.SegmentCount
+		}
+
+		outputs = append(outputs, outputRecord{
+			Name:      outputName,
+			Mode:      string(mode),
+			Bytes:     stat.Size(),
+			Encoder:   options.Encoder,
+			Subtitles: subtitleFile,
 		})
-	if err != nil {
-		return nil, fmt.Errorf("render: %w", err)
-	}
-
-	// Warnings are things that worked but not as the user probably intended —
-	// styling dropped by the container, a hardware encoder that fell back to
-	// software. They are logged because the alternative is the user discovering
-	// them on playback.
-	for _, warning := range warnings {
-		env.Log.Warn(warning)
-	}
-
-	stat, err := os.Stat(outputPath)
-	if err != nil {
-		return nil, fmt.Errorf("render: reported success but wrote no output: %w", err)
 	}
 
 	env.ReportProgress(1, "done")
 
-	subtitleLines := 0
-	if file, ok := manifest.FileFor(fileFormatFor(subtitleFile)); ok {
-		subtitleLines = file.SegmentCount
-	}
+	// The first is the primary: it is the one a consumer should open, and the
+	// order comes from the configuration rather than from a rule invented here.
+	primary := outputs[0]
 
 	return &stage.Result{
-		Primary: outputName,
+		Primary: primary.Name,
 		Metadata: map[string]any{
-			"mode":           string(mode),
-			"encoder":        options.Encoder,
-			"crf":            options.CRF,
-			"preset":         options.Preset,
-			"subtitles":      subtitleFile,
+			"mode":           primary.Mode,
+			"modes":          modeNames(outputs),
+			"encoder":        primary.Encoder,
+			"subtitles":      primary.Subtitles,
 			"subtitle_lines": subtitleLines,
-			"output_bytes":   stat.Size(),
+			"output_bytes":   primary.Bytes,
+			"outputs":        outputs,
 			"duration_s":     info.Duration,
 			"warnings":       warnings,
 			"has_video":      info.HasVideo(),
@@ -156,8 +190,101 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 	}, nil
 }
 
-// options builds the render settings.
-func (s *Stage) options(ctx context.Context, env *stage.Env, mode media.RenderMode) (media.RenderOptions, error) {
+// outputRecord is one rendered file, as recorded on the artifact.
+type outputRecord struct {
+	Name      string `json:"name"`
+	Mode      string `json:"mode"`
+	Bytes     int64  `json:"bytes"`
+	Encoder   string `json:"encoder,omitempty"`
+	Subtitles string `json:"subtitles"`
+}
+
+func modeNames(outputs []outputRecord) []string {
+	names := make([]string, 0, len(outputs))
+	for _, output := range outputs {
+		names = append(names, output.Mode)
+	}
+	return names
+}
+
+// renderModes normalises the configured list.
+//
+// Deduplicated and ordered, because the artifact key is built from this
+// configuration subtree: a list that varied in order or repetition between two
+// runs of the same configuration would produce a different key and re-encode
+// the film.
+func renderModes(configured []string) ([]media.RenderMode, error) {
+	if len(configured) == 0 {
+		// An empty list is a request for nothing, which is a mistake rather than
+		// a preference. Falling back to soft would silently ignore the setting.
+		return nil, errors.New(
+			"render: render.modes is empty; list the versions to produce, for example [soft] or [soft, hard]")
+	}
+
+	seen := map[media.RenderMode]bool{}
+	modes := make([]media.RenderMode, 0, len(configured))
+
+	for _, name := range configured {
+		mode := media.RenderMode(strings.TrimSpace(name))
+		if mode != media.RenderSoft && mode != media.RenderHard {
+			return nil, fmt.Errorf("render: %q is not a render mode; use soft or hard", name)
+		}
+		if seen[mode] {
+			continue
+		}
+		seen[mode] = true
+		modes = append(modes, mode)
+	}
+	return modes, nil
+}
+
+// capabilities probes FFmpeg, but only when a mode needs the answer.
+//
+// A soft render is a stream copy: it does not care which filters or encoders
+// exist, and probing for them would spawn three FFmpeg processes to learn
+// something nothing is going to use.
+func (s *Stage) capabilities(
+	ctx context.Context,
+	env *stage.Env,
+	modes []media.RenderMode,
+) (*media.Capabilities, error) {
+	needsHard := false
+	for _, mode := range modes {
+		if mode == media.RenderHard {
+			needsHard = true
+		}
+	}
+	if !needsHard {
+		return nil, nil
+	}
+
+	caps, err := env.Media.Capabilities(ctx)
+	if err != nil {
+		// The probe failed, so the answer is unknown rather than no. Attempting
+		// the burn is the right call: if the filter is missing, FFmpeg names it,
+		// and that error is more specific than anything guessable here.
+		env.Log.Warn("could not detect the available filters; attempting the burn anyway",
+			"error", err)
+		return nil, nil
+	}
+
+	// Not every FFmpeg build has libass, and a user whose does not deserves to
+	// be told which setting to change rather than shown "No such filter:
+	// 'subtitles'", which reads as a bug in this program.
+	//
+	// Refused before anything is encoded: the alternative is a burn that runs to
+	// completion and then reports a missing filter, having already spent however
+	// long it takes to re-encode the whole film.
+	if !caps.CanBurnSubtitles() {
+		return nil, errors.New(
+			"render: this FFmpeg was built without libass, so it cannot draw subtitles into video; " +
+				"drop hard from render.modes, or install an FFmpeg built with --enable-libass")
+	}
+	return caps, nil
+}
+
+// options builds the render settings. `caps` is nil when nothing needed probing.
+func (s *Stage) options(env *stage.Env, mode media.RenderMode, caps *media.Capabilities) media.RenderOptions {
 	cfg := env.Config.Render
 
 	options := media.DefaultRenderOptions()
@@ -171,42 +298,19 @@ func (s *Stage) options(ctx context.Context, env *stage.Env, mode media.RenderMo
 	if mode == media.RenderSoft {
 		// The encoder is irrelevant to a stream copy. Leaving it empty is more
 		// honest than reporting one that was never used.
-		return options, nil
-	}
-
-	// Checked before anything is encoded, because the failure it prevents is a
-	// burn that runs to completion and then reports a missing filter — having
-	// already spent however long it takes to re-encode the whole film.
-	//
-	// Not every FFmpeg build has libass, and a user whose does not deserves to
-	// be told that rather than shown "No such filter: 'subtitles'", which reads
-	// as a bug in this program.
-	caps, err := env.Media.Capabilities(ctx)
-	if err != nil {
-		// The probe failed, so the answer is unknown rather than no. Attempting
-		// the burn is the right call: if the filter is missing, the error from
-		// FFmpeg still names it.
-		env.Log.Warn("could not detect the available filters; attempting the burn anyway",
-			"error", err)
-		options.Encoder = cfg.Encoder
-		return options, nil
-	}
-	if !caps.CanBurnSubtitles() {
-		return media.RenderOptions{}, errors.New(
-			"render: this FFmpeg was built without libass, so it cannot draw subtitles into video; " +
-				"set render.mode to soft, or install an FFmpeg built with --enable-libass")
+		return options
 	}
 
 	options.Encoder = cfg.Encoder
-	if options.Encoder != "" {
-		return options, nil
+	if options.Encoder != "" || caps == nil {
+		return options
 	}
 
 	// Detected rather than assumed: which hardware encoders exist varies by
 	// machine and by FFmpeg build, and libx264 is always there.
 	options.Encoder = caps.RecommendedVideoEncoder()
 
-	return options, nil
+	return options
 }
 
 // outputName builds the rendered file's name.
@@ -216,7 +320,7 @@ func (s *Stage) options(ctx context.Context, env *stage.Env, mode media.RenderMo
 // so deriving the output from it would give every project in the data
 // directory the same output filename, and a user who exported two of them
 // would have two files called source.nikucooker.mkv.
-func outputName(projectName string, hasVideo bool) (string, error) {
+func outputBase(projectName string, hasVideo bool) (string, error) {
 	if !hasVideo {
 		// An audio-only source cannot be rendered as video, and the caller has
 		// already refused. This exists so that the name is never built from an
@@ -228,10 +332,24 @@ func outputName(projectName string, hasVideo bool) (string, error) {
 	if base == "" {
 		base = "nikucooker"
 	}
+	return base, nil
+}
 
+// outputName builds one output's filename.
+//
+// The mode is part of it, because two outputs that differ only in whether the
+// subtitles are in the picture are indistinguishable once they are sitting in
+// the same directory — and picking the wrong one is discovered by watching the
+// whole thing.
+func outputName(base string, mode media.RenderMode) string {
 	// Matroska, because it is the container that carries ASS styling natively
 	// and accepts any codec. Writing MP4 would silently drop the styling.
-	return base + ".nikucooker.mkv", nil
+	suffix := ".nikucooker.mkv"
+	if mode == media.RenderHard {
+		suffix = ".nikucooker.hardsub.mkv"
+	}
+
+	return base + suffix
 }
 
 // sanitiseFilename removes what cannot appear in a filename.

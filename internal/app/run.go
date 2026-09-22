@@ -191,7 +191,7 @@ func (a *App) execute(ctx context.Context, work *prepared, opts RunOptions) {
 	runErr := pipeline.Run(ctx, work.plan, work.options, fanOut(observer, opts.Observer))
 
 	a.persist(ctx, work, opts)
-	a.publishOutputs(ctx, work)
+	a.publishOutputs(ctx, work.ProjectID)
 	a.pruneCache(ctx)
 
 	status, code, message := jobOutcome(ctx, runErr)

@@ -233,6 +233,10 @@ type envKind int
 
 const (
 	envString envKind = iota
+	// envStringList is comma-separated, because the environment has no way to
+	// express a sequence and every alternative — JSON in an env var, repeated
+	// variables — is worse to type than a comma.
+	envStringList
 	envInt
 	envBool
 	envDuration
@@ -265,7 +269,7 @@ var envBindings = []struct {
 	{"NIKUCOOKER_TRANSLATION_API_KEY", "translation.api_key", envString},
 	{"NIKUCOOKER_TRANSLATION_MODEL", "translation.model", envString},
 	{"NIKUCOOKER_TRANSLATION_STYLE", "translation.style", envString},
-	{"NIKUCOOKER_RENDER_MODE", "render.mode", envString},
+	{"NIKUCOOKER_RENDER_MODES", "render.modes", envStringList},
 	{"NIKUCOOKER_WORKER_POOL_SIZE", "worker.pool_size", envInt},
 }
 
@@ -316,6 +320,14 @@ func coerce(raw string, kind envKind) (any, error) {
 			return nil, fmt.Errorf("expected a duration such as 120s, got %q", raw)
 		}
 		return d.String(), nil
+	case envStringList:
+		parts := []string{}
+		for _, part := range strings.Split(raw, ",") {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				parts = append(parts, trimmed)
+			}
+		}
+		return parts, nil
 	default:
 		return raw, nil
 	}

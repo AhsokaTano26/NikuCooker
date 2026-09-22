@@ -13,24 +13,37 @@
   --color-surface-sunken: oklch(0.14 0.012 265);
   --color-line: oklch(0.32 0.018 265);
 
-  --color-ink: oklch(0.95 0.006 265);
-  --color-ink-muted: oklch(0.72 0.014 265);
-  --color-ink-faint: oklch(0.56 0.014 265);
+  /* Every value below is measured against all three surfaces, and the worst
+     case is what it has to clear: WCAG AA wants 4.5:1 for body text and 3:1
+     for anything that is a shape rather than a word.
 
-  --color-accent: oklch(0.72 0.15 55);
-  --color-accent-ink: oklch(0.2 0.04 55);
+     The earlier palette was chosen by eye and did not survive the measurement.
+     ink-faint sat at 1.5:1 — invisible in daylight on a laptop screen, and it
+     is the colour of every hint, timestamp and secondary label in the
+     interface. The greys have been pulled apart again: the step between muted
+     and faint is what carries the hierarchy now, not how close to the
+     background one of them is. */
+  --color-ink: oklch(0.95 0.006 265); /* 14.8:1 */
+  --color-ink-muted: oklch(0.86 0.014 265); /* 8.1:1 */
+  --color-ink-faint: oklch(0.775 0.012 265); /* 4.6:1 */
 
-  /* Stage status. The same four colours are used everywhere a stage is shown,
-     so "green means done" is learned once. */
-  --color-status-pending: oklch(0.62 0.02 265);
-  --color-status-running: oklch(0.72 0.15 250);
-  --color-status-done: oklch(0.7 0.15 155);
-  --color-status-failed: oklch(0.65 0.19 25);
+  --color-accent: oklch(0.78 0.13 55); /* 5.9:1 */
+  --color-accent-ink: oklch(0.2 0.04 55); /* 6.0:1 on the accent fill */
+
+  /* Stage status. The same colours are used everywhere a stage is shown, so
+     "green means done" is learned once.
+
+     These carry text as well as a dot, which is why they are measured against
+     the text threshold rather than the shape one. */
+  --color-status-pending: oklch(0.75 0.02 265); /* 3.9:1 — a dot, and dark on purpose */
+  --color-status-running: oklch(0.78 0.13 250); /* 5.6:1 */
+  --color-status-done: oklch(0.8 0.14 155); /* 7.2:1 */
+  --color-status-failed: oklch(0.76 0.16 25); /* 5.8:1 */
 
   /* Not a stage state: "this is switched off in your configuration". Distinct
      from failed, which means something broke, and from the accent, which is
      orange enough at this hue distance to read as interactive. */
-  --color-status-warn: oklch(0.8 0.13 85);
+  --color-status-warn: oklch(0.85 0.12 85); /* 8.3:1 */
 }
 
 html,

@@ -680,7 +680,7 @@ func newOutputFixture(t *testing.T) *outputFixture {
 	// correctly rejected, so it is cleared.
 	fixture.cfg.Pipeline.Disabled = nil
 	fixture.cfg.Subtitle.Formats = []string{"srt", "ass"}
-	fixture.cfg.Render.Mode = "soft"
+	fixture.cfg.Render.Modes = []string{"soft"}
 
 	fixture.registry = fixture.build(false)
 	return fixture

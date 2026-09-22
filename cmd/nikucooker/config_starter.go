@@ -100,10 +100,18 @@ pipeline:
   # disabled: [polish]
 
 render:
-  # soft  muxes the subtitles in as a separate track, copying the video stream.
-  #       Seconds, lossless, and the viewer can turn them off.
-  # hard  burns them into the picture. A full re-encode, slow and irreversible.
-  # mode: soft
+  # Which versions to produce. Listing both produces both from one run.
+  #
+  #   soft  muxes the subtitles in as a separate track, copying the video
+  #         stream. Seconds, lossless, and the viewer can turn them off.
+  #   hard  burns them into the picture. A full re-encode, slow, irreversible,
+  #         and needs an FFmpeg built with libass. Run "nikucooker doctor" to
+  #         see whether this machine has one.
+  #
+  # The hard version is named ...nikucooker.hardsub.mkv so the two are not
+  # confused once they are sitting in the same folder.
+  # modes: [soft]
+  # modes: [soft, hard]
 
 log:
   # debug | info | warn | error

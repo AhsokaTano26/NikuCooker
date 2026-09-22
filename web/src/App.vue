@@ -90,7 +90,16 @@ onBeforeUnmount(() => {
         <h1 class="text-sm font-medium text-ink-muted">{{ currentTitle }}</h1>
       </header>
 
-      <main class="min-h-0 flex-1 overflow-auto">
+      <!--
+        Padded here rather than in each view.
+
+        The header is inset by px-8, and the views added nothing of their own —
+        so every page's first element sat flush against the sidebar's border and
+        the header's, with its text starting 32px to the left of the title above
+        it. A view that forgot was indistinguishable from one that meant it,
+        which is what made it look broken rather than deliberate.
+      -->
+      <main class="min-h-0 flex-1 overflow-auto px-8 py-6">
         <RouterView />
       </main>
     </div>

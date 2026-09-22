@@ -272,7 +272,17 @@ type Worker struct {
 
 // Render configures video output.
 type Render struct {
-	Mode string `yaml:"mode"` // soft | hard
+	// Modes are the versions to produce, in order.
+	//
+	// A list rather than one choice, because the two answer different needs and
+	// asking for both is ordinary: soft keeps the video stream untouched and
+	// lets a viewer turn the subtitles off, hard puts them in the picture for a
+	// player that will not show a separate track. Producing one when both were
+	// asked for is cheaper than re-encoding the whole film a second time.
+	//
+	//	soft — mux the subtitles in as a track; seconds, lossless
+	//	hard — draw them into the picture; a full re-encode
+	Modes []string `yaml:"modes"`
 
 	// Encoder is chosen from detected capabilities when empty: videotoolbox on
 	// Apple Silicon, nvenc with CUDA, libx264 otherwise.
@@ -415,7 +425,10 @@ func Default() *Config {
 			StallTimeout:     120 * time.Second,
 		},
 		Render: Render{
-			Mode:         "soft",
+			// Soft alone by default. Hard is a re-encode of the whole film, and
+			// a default that quietly costs an hour of CPU on a feature-length
+			// episode is not a default.
+			Modes:        []string{"soft"},
 			Encoder:      "",
 			CRF:          18,
 			Preset:       "medium",
@@ -564,11 +577,21 @@ func (c *Config) Validate() error {
 		add("worker.pool_size: must be at least 1, got %d", c.Worker.PoolSize)
 	}
 
-	switch c.Render.Mode {
-	case "soft", "hard":
-	default:
-		add("render.mode: %q is not one of soft, hard", c.Render.Mode)
+	// An empty list is a request for no output at all, which is a mistake
+	// rather than a preference. Caught here rather than in the stage, so it is
+	// a startup error rather than one that surfaces at the end of a run.
+	if len(c.Render.Modes) == 0 {
+		add("render.modes: must list at least one of soft, hard")
 	}
+
+	for _, mode := range c.Render.Modes {
+		switch mode {
+		case "soft", "hard":
+		default:
+			add("render.modes: %q is not one of soft, hard", mode)
+		}
+	}
+
 	if c.Render.CRF < 0 || c.Render.CRF > 51 {
 		add("render.crf: %d is outside 0–51", c.Render.CRF)
 	}

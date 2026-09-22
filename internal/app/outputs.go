@@ -37,45 +37,59 @@ var deliverableExtensions = map[string]bool{
 // cannot get at work that is finished and correct because a later step of the
 // same run was not. Stages that failed have no artifact and are simply not
 // considered.
-func (a *App) publishOutputs(ctx context.Context, work *prepared) {
-	files := a.deliverables(work)
+func (a *App) publishOutputs(ctx context.Context, projectID string) {
+	files := a.deliverables(ctx, projectID)
 	if len(files) == 0 {
 		return
 	}
 
-	if err := project.PublishOutputs(a.dataDir, work.ProjectID, files); err != nil {
+	if err := project.PublishOutputs(a.dataDir, projectID, files); err != nil {
 		// Logged rather than returned: the run succeeded, and its results are
 		// in the cache and readable through the API either way. Failing here
 		// would report a successful run as a failed one over the placement of
 		// its output.
 		a.log.Error("could not publish the run's output files",
-			"project_id", work.ProjectID, "error", err)
+			"project_id", projectID, "error", err)
 		return
 	}
 
-	a.log.Info("published output files", "project_id", work.ProjectID, "count", len(files))
+	a.log.Info("published output files", "project_id", projectID, "count", len(files))
 }
 
-// deliverables collects the finished files from a run's plan.
-func (a *App) deliverables(work *prepared) []project.Published {
-	projectDir := project.Dir(a.dataDir, work.ProjectID)
+// deliverables collects the project's finished files.
+//
+// Every stage's *current* artifact, rather than the ones this particular run
+// happened to touch. The difference matters for a partial run: `--only render`
+// recomputes one stage and finds the subtitles already sitting in the cache, so
+// a list built from the run would contain a video and nothing else — and the
+// output directory, which is replaced rather than added to, would lose the
+// subtitle files that are still perfectly current.
+func (a *App) deliverables(ctx context.Context, projectID string) []project.Published {
+	projectDir := project.Dir(a.dataDir, projectID)
+	store := a.Artifacts.For(projectID)
 
 	// Taken by name as well as by file, so that two stages publishing the same
 	// filename is a decision made here rather than an error raised later.
 	taken := map[string]bool{}
 	files := []project.Published{}
 
-	for _, sp := range work.plan.Stages {
-		if !sp.State.Succeeded() || sp.Artifact == nil {
+	for _, stage := range a.registry.Ordered() {
+		name := stage.Spec().Name
+
+		current, err := store.Latest(ctx, name)
+		if err != nil {
+			a.log.Warn("could not look up a stage's current artifact", "stage", name, "error", err)
+			continue
+		}
+		if current == nil {
 			continue
 		}
 
-		dir := filepath.Join(projectDir, filepath.FromSlash(sp.Artifact.Path))
+		dir := filepath.Join(projectDir, filepath.FromSlash(current.Path))
 
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			a.log.Warn("could not read a stage's artifact directory",
-				"stage", sp.Stage.Spec().Name, "error", err)
+			a.log.Warn("could not read a stage's artifact directory", "stage", name, "error", err)
 			continue
 		}
 
@@ -84,19 +98,19 @@ func (a *App) deliverables(work *prepared) []project.Published {
 				continue
 			}
 
-			name := entry.Name()
-			if taken[name] {
+			published := entry.Name()
+			if taken[published] {
 				// Qualified by the stage that produced it, because dropping one
 				// silently would be worse than a longer name.
-				name = sp.Stage.Spec().Name + "-" + name
+				published = name + "-" + published
 			}
-			if taken[name] {
+			if taken[published] {
 				continue
 			}
-			taken[name] = true
+			taken[published] = true
 
 			files = append(files, project.Published{
-				Name:   name,
+				Name:   published,
 				Source: filepath.Join(dir, entry.Name()),
 			})
 		}
