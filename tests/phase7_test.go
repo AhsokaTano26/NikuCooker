@@ -20,6 +20,7 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/api"
 	"github.com/AhsokaTano26/NikuCooker/internal/app"
 	"github.com/AhsokaTano26/NikuCooker/internal/events"
+	"github.com/AhsokaTano26/NikuCooker/internal/jobs"
 	"github.com/AhsokaTano26/NikuCooker/internal/logging"
 	"github.com/AhsokaTano26/NikuCooker/internal/project"
 	"github.com/AhsokaTano26/NikuCooker/internal/qc"
@@ -958,4 +959,61 @@ func TestPhase7UnknownModelIsNotFound(t *testing.T) {
 	if !strings.Contains(message, "tiny") {
 		t.Errorf("the error does not name the available models: %q", message)
 	}
+}
+
+// A single-stage run must be accepted.
+//
+// The jobs table requires a job of kind "stage" to name its target, and a run
+// limited to one stage is exactly that kind. Nothing set the field, so
+// `nikucooker run <id> --only qc` — and the interface's per-stage re-run button,
+// which takes the same path — failed with a database constraint the user could
+// do nothing about.
+func TestPhase7SingleStageRunIsAccepted(t *testing.T) {
+	ffmpegPath(t)
+
+	h := newAPIHarness(t)
+
+	// A project with a real source, because a run refuses to start without one.
+	// The fixture is built outside the project and handed to Create, which is
+	// what copies it into place — the same path `project create` takes.
+	source := filepath.Join(t.TempDir(), "episode01.mp4")
+	buildFixture(t, source)
+
+	created, err := h.app.Projects.Create(context.Background(), project.CreateRequest{
+		Name:           "single stage",
+		SourceLanguage: "ja",
+		TargetLanguage: "zh-Hans",
+		Style:          "fansub",
+		SourceName:     "episode01.mp4",
+		SourceOrigin:   source,
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	status, _, raw := h.request("POST",
+		"/api/v1/projects/"+created.ID+"/stages/qc/run", map[string]any{})
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", status, raw)
+	}
+
+	// The job must be recorded, and must name the stage it targets.
+	recorded, _, err := h.app.Jobs.ListByProject(context.Background(), created.ID, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recorded) != 1 {
+		t.Fatalf("expected one job, got %d", len(recorded))
+	}
+	if recorded[0].Kind != jobs.KindStage {
+		t.Errorf("job kind = %q, want %q", recorded[0].Kind, jobs.KindStage)
+	}
+	if recorded[0].TargetStage != "qc" {
+		t.Errorf("job targets %q, want qc", recorded[0].TargetStage)
+	}
+
+	// Stopped before the harness tears the database down: the run continues in a
+	// goroutine, and leaving it writing into a closed connection turns a pass
+	// into a flake.
+	h.app.Scheduler.Cancel(created.ID)
 }

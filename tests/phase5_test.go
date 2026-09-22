@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1269,4 +1270,69 @@ func TestPhase5MissingProviderIsReported(t *testing.T) {
 	if !found {
 		t.Error("the plan contained no translation stage")
 	}
+}
+
+// The translation cache must stay within its configured size.
+//
+// It grows with every line every user translates, and nothing else ever removes
+// from it — so without a trim the table is unbounded on an install that runs
+// for long enough, and the setting that claims to bound it does nothing.
+func TestPhase5CacheIsPrunedToItsLimit(t *testing.T) {
+	h := newPhase5Harness(t)
+	ctx := context.Background()
+
+	cache := translationcore.NewCache(h.db)
+
+	entries := make([]translationcore.CacheEntry, 0, 60)
+	for i := 0; i < 60; i++ {
+		entries = append(entries, translationcore.CacheEntry{
+			Key:        "trc_" + strings.Repeat("0", 28) + pad(i),
+			SourceText: "line " + pad(i),
+			Translated: "译文",
+			Provider:   "fake", Model: "fake-model",
+			PromptVers: "v1", Style: "fansub",
+		})
+	}
+	if err := cache.Put(ctx, entries); err != nil {
+		t.Fatalf("store translations: %v", err)
+	}
+
+	total, _, err := cache.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 60 {
+		t.Fatalf("stored %d translations, want 60", total)
+	}
+
+	// Nothing to do when the limit is above the size.
+	if removed, err := cache.Prune(ctx, 1000); err != nil || removed != 0 {
+		t.Errorf("pruning below the size removed %d (err: %v)", removed, err)
+	}
+
+	removed, err := cache.Prune(ctx, 10)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if removed != 50 {
+		t.Errorf("removed %d entries, want 50", removed)
+	}
+
+	after, _, err := cache.Stats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != 10 {
+		t.Errorf("the cache holds %d entries after pruning to 10", after)
+	}
+
+	// Zero means no ceiling, which is what the configuration documents.
+	if removed, err := cache.Prune(ctx, 0); err != nil || removed != 0 {
+		t.Errorf("a zero limit removed %d entries (err: %v)", removed, err)
+	}
+}
+
+// pad renders a small integer as a fixed-width decimal.
+func pad(n int) string {
+	return strconv.Itoa(1000 + n)[1:]
 }
