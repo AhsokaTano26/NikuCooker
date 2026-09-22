@@ -214,6 +214,28 @@ export interface SystemOverview {
     loaded_models: LoadedModel[]
   }
   stats: SystemStats
+  features: SystemFeatures
+}
+
+/**
+ * What this installation is configured to do.
+ *
+ * Read before offering an action rather than after it fails: a capability that
+ * is off is a refusal waiting to happen, and a form that says so only once it
+ * has been filled in wastes the filling in.
+ */
+export interface SystemFeatures {
+  /** Whether a project can be created from a server-side path
+   *  (config: `server.allow_path_source`). */
+  path_source: boolean
+  /** The largest upload this server accepts. A client-side check against it
+   *  saves a transfer that the server would refuse at the end. */
+  max_upload_bytes: number
+  /** The configuration file this process reads. Reported even when it does not
+   *  exist, because "no file, and here is where one goes" is what a user needs
+   *  in order to change a setting. */
+  config_path: string
+  config_file_exists: boolean
 }
 
 export interface SystemStats {

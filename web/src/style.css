@@ -26,6 +26,11 @@
   --color-status-running: oklch(0.72 0.15 250);
   --color-status-done: oklch(0.7 0.15 155);
   --color-status-failed: oklch(0.65 0.19 25);
+
+  /* Not a stage state: "this is switched off in your configuration". Distinct
+     from failed, which means something broke, and from the accent, which is
+     orange enough at this hue distance to read as interactive. */
+  --color-status-warn: oklch(0.8 0.13 85);
 }
 
 html,

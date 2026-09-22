@@ -405,6 +405,10 @@ export interface Settings {
   /** Which layer set each key. The answer to "I changed it and nothing happened". */
   provenance: Record<string, string>
   data_dir: string
+  /** The configuration file this process reads, and whether it is there. A
+   *  missing file is not an error, but it does mean a change has nowhere to go. */
+  config_path: string
+  config_file_exists: boolean
 }
 
 export interface LogRecord {
@@ -419,10 +423,112 @@ export const settings = {
   get: (signal?: AbortSignal): Promise<Settings> => request('/settings', { signal }),
 }
 
+// ---------------------------------------------------------------------------
+// Uploads
+// ---------------------------------------------------------------------------
+
+export const uploads = { create: uploadFile, discard: discardUpload }
+
+export interface Upload {
+  id: string
+  name: string
+  size_bytes: number
+  max_bytes: number
+}
+
+/**
+ * An upload in flight.
+ *
+ * Returned as a handle rather than a bare promise so the caller can cancel.
+ * Uploading a multi-gigabyte file is long enough that "I picked the wrong one"
+ * is certain to happen, and without this the only remedy is to wait it out or
+ * reload the page.
+ */
+export interface UploadHandle {
+  promise: Promise<Upload>
+  abort: () => void
+}
+
+/**
+ * Uploads a file, reporting progress.
+ *
+ * XMLHttpRequest rather than fetch, which is the one thing this client does not
+ * use the shared `request` helper for. Fetch cannot report upload progress —
+ * request bodies are not streams in any browser that matters yet — and a
+ * progress bar is the entire reason this is a separate request from creating
+ * the project.
+ */
+export function uploadFile(
+  file: File,
+  onProgress?: (fraction: number) => void,
+): UploadHandle {
+  const xhr = new XMLHttpRequest()
+
+  const promise = new Promise<Upload>((resolve, reject) => {
+    xhr.open('POST', `${API_BASE}/uploads`)
+
+    xhr.upload.addEventListener('progress', (event) => {
+      // lengthComputable is false for a chunked request, in which case the
+      // total is unknown and a fraction would be a guess.
+      if (event.lengthComputable && onProgress) {
+        onProgress(event.loaded / event.total)
+      }
+    })
+
+    xhr.addEventListener('load', () => {
+      const payload = parseBody(xhr.responseText)
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as Upload)
+        return
+      }
+      if (isApiErrorBody(payload)) {
+        reject(
+          new ApiError(payload.error.code, payload.error.message, xhr.status, payload.error.details ?? {}),
+        )
+        return
+      }
+      reject(
+        new ApiError('UNEXPECTED_RESPONSE', `服务返回了 ${xhr.status}，且响应体不是协议规定的错误格式。`, xhr.status),
+      )
+    })
+
+    xhr.addEventListener('error', () => {
+      reject(new ApiError('NETWORK_UNREACHABLE', '上传中断，无法连接到 NikuCooker 服务。', 0))
+    })
+
+    xhr.addEventListener('abort', () => {
+      reject(new ApiError('REQUEST_ABORTED', '上传已取消。', 0))
+    })
+
+    // The Content-Type is left to the browser: it is the one that knows the
+    // multipart boundary it generated.
+    const form = new FormData()
+    form.append('file', file, file.name)
+    xhr.send(form)
+  })
+
+  return { promise, abort: () => xhr.abort() }
+}
+
+/** Discards a staged upload. */
+export function discardUpload(id: string): Promise<void> {
+  return request(`/uploads/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+function parseBody(text: string): unknown {
+  if (text === '') return undefined
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
 export const logs = {
   /** `after` selects records newer than a sequence number, for following the log. */
   list: (after = 0, limit = 500, signal?: AbortSignal): Promise<{ items: LogRecord[]; seq: number }> =>
     request('/logs', { query: { after, limit }, signal }),
 }
 
-export const api = { projects, run, segments, qc, system, models, providers, settings, logs }
+export const api = { projects, run, segments, qc, system, models, providers, settings, logs, uploads }

@@ -34,6 +34,17 @@ const browserGlobals = {
   HTMLTextAreaElement: 'readonly',
   HTMLInputElement: 'readonly',
   HTMLElement: 'readonly',
+  // Uploading. XMLHttpRequest rather than fetch, because only it reports
+  // upload progress; FormData because it sets its own multipart boundary.
+  File: 'readonly',
+  FileList: 'readonly',
+  FormData: 'readonly',
+  XMLHttpRequest: 'readonly',
+  DragEvent: 'readonly',
+  Event: 'readonly',
+  // `location` is declared above; `globalThis` is how the client reaches it
+  // when there is no page — a test, or a server-side render.
+  globalThis: 'readonly',
   confirm: 'readonly',
   alert: 'readonly',
   requestAnimationFrame: 'readonly',

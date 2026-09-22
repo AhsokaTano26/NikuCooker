@@ -86,9 +86,17 @@ function isSecret(value: string): boolean {
         <span class="text-xs text-ink-faint">{{ rows.length }} 项</span>
       </div>
 
-      <p v-if="settings.data.value" class="text-xs text-ink-faint">
-        数据目录 <code class="font-mono">{{ settings.data.value.data_dir }}</code>
-      </p>
+      <div v-if="settings.data.value" class="space-y-1 text-xs text-ink-faint">
+        <p>数据目录 <code class="font-mono">{{ settings.data.value.data_dir }}</code></p>
+        <p>
+          配置文件
+          <code class="font-mono">{{ settings.data.value.config_path }}</code>
+          <span v-if="!settings.data.value.config_file_exists" class="text-status-warn">
+            —— 不存在，当前全部使用默认值。要改设置先运行
+            <code class="font-mono">nikucooker config init</code>。
+          </span>
+        </p>
+      </div>
 
       <div class="max-h-[65vh] overflow-y-auto rounded border border-line">
         <table class="w-full border-collapse text-sm">
@@ -118,7 +126,8 @@ function isSecret(value: string): boolean {
       <!-- Editing here would need a rule for precedence between three writable
            sources, which the configuration file already records key by key. -->
       <p class="text-xs text-ink-faint">
-        此页为只读。配置写在配置文件或环境变量里，改动后重启生效。
+        此页为只读。配置写在配置文件或环境变量里，改动后重启生效。界面里能改的只有翻译服务，
+        它存在数据库里，不经过配置文件。
       </p>
     </template>
   </div>
