@@ -1,0 +1,241 @@
+name: Release
+
+# A release starts at a button, not at a tag.
+#
+# The tag is created by this workflow rather than pushed by hand, and that is
+# not a convenience: a tag pushed with the default GITHUB_TOKEN does not trigger
+# other workflows, so a separate `on: push: tags` release would never run. The
+# tag and the release it produces have to happen in the same run.
+#
+#   Actions → Release → Run workflow → give it a version number
+#
+# The commit released is the one the workflow was dispatched against, so it can
+# be any branch. Whatever it is, it is verified first: the release is not built
+# from a commit that has not passed the test suite.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, without the leading v — for example 0.1.0'
+        required: true
+        type: string
+
+  pull_request:
+    # Without this, packaging is only ever exercised by a real release — so a
+    # change that breaks the archive layout or one of the five cross-compiles is
+    # discovered on release day, by the release that fails.
+    paths:
+      - .goreleaser.yaml
+      - .github/workflows/release.yml
+
+permissions:
+  contents: read
+
+# Never cancelled. A release killed halfway has pushed its tag and published
+# nothing, and the retry then fails because the version already exists — so a
+# second dispatch waits its turn instead of replacing the first.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Keep Go's build cache in the module cache directory so the setup-go cache
+  # action picks it up alongside the modules.
+  GOFLAGS: -mod=readonly
+
+jobs:
+  verify:
+    name: Verify
+    # The dispatch chooses the commit, and it need not be one CI has seen.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify gofmt
+        run: |
+          out=$(gofmt -l cmd internal pkg web)
+          if [ -n "$out" ]; then
+            echo "gofmt needed on:"; echo "$out"; exit 1
+          fi
+
+      - name: Build
+        # CGO_ENABLED=0 exercises the same code path the release matrix uses.
+        env:
+          CGO_ENABLED: '0'
+        run: go build ./...
+
+      - name: Set up the AI worker environment
+        # Without it the worker tests skip rather than fail, and a suite that
+        # skips is not a check — which is the opposite of what this job is for.
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install AI worker dependencies
+        working-directory: ai
+        run: uv sync --frozen
+
+      - name: Cache recognition models
+        # The ASR test needs weights, and the same cache CI fills.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/nikucooker
+          key: models-tiny-${{ runner.os }}
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -race
+
+  tag:
+    name: Tag
+    needs: verify
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # The only job that writes. Kept apart from verify so that the test suite —
+    # which runs code from the repository — never does so holding a token that
+    # can push.
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The changelog is built from the commits since the previous tag.
+          fetch-depth: 0
+
+      - name: Check the version
+        id: version
+        env:
+          # Through the environment rather than interpolated into the script: an
+          # input is user text, and `${{ }}` inside a run block is shell
+          # injection with a friendlier name.
+          VERSION: ${{ inputs.version }}
+        run: |
+          # A leading v is what most people type and what the tag will carry
+          # either way, so it is accepted and normalised rather than refused.
+          VERSION="${VERSION#v}"
+
+          # A version that GoReleaser cannot parse fails much later, inside the
+          # build, with a message about templates. This is the same rule stated
+          # where the person who typed it can still act on it.
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::version must look like 0.1.0 or 0.2.0-rc.1 — got '$VERSION'"
+            exit 1
+          fi
+
+          if git rev-parse --verify --quiet "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::tag v$VERSION already exists; a released version is not reused"
+            exit 1
+          fi
+
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push the tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+
+  release:
+    name: Release
+    needs: [verify, tag]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The tag this run created. Checking out the branch instead would
+          # build whatever it points at now, which is not what was verified and
+          # not what the tag names.
+          ref: ${{ needs.tag.outputs.tag }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # Pinned to the value in web/package.json, which corepack also uses
+          # inside the Docker build and CI uses for the test suite.
+          version: 10.33.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      # The Vue application is embedded into the binary by //go:embed, so it has
+      # to be built before Go compiles — GoReleaser's own before-hooks do it.
+      # Node and pnpm have to exist first, which is what the two steps above and
+      # this comment are here to say.
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The run was dispatched against a branch, so GITHUB_REF is a branch
+          # and GoReleaser would otherwise have to infer the version from it.
+          # The checkout above is at the tag, but which tag the build is *for*
+          # is stated rather than inferred — this is the documented override.
+          # https://goreleaser.com/cookbooks/set-a-custom-git-tag/
+          GORELEASER_CURRENT_TAG: ${{ needs.tag.outputs.tag }}
+
+  package:
+    name: Package (dry run)
+    # The whole matrix, built and archived exactly as a release would, without
+    # publishing anything. A configuration error is a two-minute failure here
+    # rather than a release that stops halfway.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Validate the configuration
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: '~> v2'
+          args: check
+
+      - name: Build every target without publishing
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: '~> v2'
+          args: release --snapshot --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
