@@ -84,7 +84,50 @@ func (s *Service) Capabilities(ctx context.Context) (*Capabilities, error) {
 	}
 	caps.Encoders = parseEncoders(encodersOut.String())
 
+	// A failure here is not fatal either, but it is treated differently from the
+	// encoder list: an empty filter list means "unknown", and the render stage
+	// reads it as "cannot burn" rather than attempting a burn that will fail
+	// with a message about a missing filter.
+	var filtersOut, filtersErr bytes.Buffer
+	if err := s.run(ctx, s.ffmpeg, FiltersArgs(), &filtersOut, &filtersErr); err != nil {
+		s.log.Debug("could not list ffmpeg filters", "error", err)
+		return caps, nil
+	}
+	caps.Filters = parseFilters(filtersOut.String())
+
 	return caps, nil
+}
+
+// parseFilters reads the filter names out of ffmpeg -filters.
+func parseFilters(out string) []string {
+	// Only the filters this project could use. The full list runs to several
+	// hundred entries and is not worth carrying.
+	wanted := map[string]bool{
+		"subtitles": true,
+		"ass":       true,
+		"scale":     true,
+		"format":    true,
+		"fps":       true,
+		"overlay":   true,
+		"highpass":  true,
+		"loudnorm":  true,
+		"atrim":     true,
+		"aselect":   true,
+	}
+
+	var filters []string
+	for _, line := range strings.Split(out, "\n") {
+		// Data lines look like " T.. subtitles  V->V  Render text subtitles".
+		// The name is the second field, after the flags column.
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if wanted[fields[1]] {
+			filters = append(filters, fields[1])
+		}
+	}
+	return filters
 }
 
 // parseVersion extracts the version from ffmpeg -version's first line.

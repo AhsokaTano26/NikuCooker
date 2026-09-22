@@ -285,6 +285,26 @@ type Capabilities struct {
 	Path     string   `json:"path"`
 	Version  string   `json:"version"`
 	Encoders []string `json:"encoders"`
+	Filters  []string `json:"filters"`
+}
+
+// HasFilter reports whether an FFmpeg build provides a filter.
+func (c *Capabilities) HasFilter(name string) bool {
+	for _, filter := range c.Filters {
+		if filter == name {
+			return true
+		}
+	}
+	return false
+}
+
+// CanBurnSubtitles reports whether this build can draw subtitles into video.
+//
+// False is not a broken installation: plenty of FFmpeg builds ship without
+// libass, including some distribution packages. It means hard subtitles are
+// unavailable and the soft path is the one to use.
+func (c *Capabilities) CanBurnSubtitles() bool {
+	return c.HasFilter("subtitles") || c.HasFilter("ass")
 }
 
 // RecommendedVideoEncoder picks an encoder from what this machine has.

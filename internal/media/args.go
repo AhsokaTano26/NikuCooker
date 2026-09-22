@@ -263,3 +263,13 @@ func VersionArgs() Args {
 func EncodersArgs() Args {
 	return Args{"-hide_banner", "-encoders"}
 }
+
+// FiltersArgs lists the available filters.
+//
+// It is not trivia. Burning subtitles in needs the `subtitles` filter, which
+// exists only when FFmpeg was built with libass — and a distribution build
+// without it fails with "No such filter: 'subtitles'", which reads as a bug in
+// this program rather than as a missing feature of the user's FFmpeg.
+func FiltersArgs() Args {
+	return Args{"-hide_banner", "-filters"}
+}
