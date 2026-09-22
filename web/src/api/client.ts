@@ -141,6 +141,22 @@ export interface CreateProjectBody {
   config?: Record<string, unknown>
 }
 
+/** One file a run produced. */
+export interface ProjectOutput {
+  name: string
+  size_bytes: number
+  modified_at: string
+  /** A coarse label to group by: subtitle, video, other. */
+  kind: 'subtitle' | 'video' | 'other'
+}
+
+export interface ProjectOutputs {
+  items: ProjectOutput[]
+  /** Where the files are on the machine running the core. An empty list with a
+   *  directory is a project that has not finished a run. */
+  dir: string
+}
+
 export const projects = {
   list: (query: ListProjectsQuery = {}, signal?: AbortSignal): Promise<Paginated<Project>> =>
     request('/projects', { query: { ...query }, signal }),
@@ -153,6 +169,14 @@ export const projects = {
 
   update: (id: string, body: Partial<CreateProjectBody>): Promise<Project> =>
     request(`/projects/${id}`, { method: 'PATCH', body }),
+
+  outputs: (id: string, signal?: AbortSignal): Promise<ProjectOutputs> =>
+    request(`/projects/${id}/outputs`, { signal }),
+
+  /** The URL a browser downloads a published file from. Not a fetch: the point
+   *  is the browser's own download, with its progress and its filename. */
+  outputURL: (id: string, name: string): string =>
+    `${API_BASE}/projects/${id}/outputs/${encodeURIComponent(name)}`,
 
   remove: (id: string, options: { confirm: boolean; deleteFiles: boolean }): Promise<void> =>
     request(`/projects/${id}`, {

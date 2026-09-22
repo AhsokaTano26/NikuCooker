@@ -559,8 +559,9 @@ type RunOptions struct {
 
 // RunResult reports what a run produced.
 type RunResult struct {
-	JobID string
-	Plan  *pipeline.Plan
+	JobID     string
+	ProjectID string
+	Plan      *pipeline.Plan
 }
 
 // Run executes the pipeline synchronously, for a caller with nothing else to do.
@@ -589,7 +590,7 @@ func (a *App) Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
 	// done.
 	a.execute(jobCtx, prepared, opts)
 
-	return &RunResult{JobID: prepared.JobID, Plan: prepared.plan}, nil
+	return &RunResult{JobID: prepared.JobID, ProjectID: prepared.ProjectID, Plan: prepared.plan}, nil
 }
 
 // stageNeedsWorker reports whether any stage in the plan will actually run and

@@ -43,7 +43,7 @@ func (a *App) Start(ctx context.Context, opts RunOptions) (*RunResult, error) {
 
 	go a.execute(jobCtx, prepared, opts)
 
-	return &RunResult{JobID: prepared.JobID, Plan: prepared.plan}, nil
+	return &RunResult{JobID: prepared.JobID, ProjectID: prepared.ProjectID, Plan: prepared.plan}, nil
 }
 
 // jobFor builds the job record a run is tracked under.
@@ -191,6 +191,7 @@ func (a *App) execute(ctx context.Context, work *prepared, opts RunOptions) {
 	runErr := pipeline.Run(ctx, work.plan, work.options, fanOut(observer, opts.Observer))
 
 	a.persist(ctx, work, opts)
+	a.publishOutputs(ctx, work)
 	a.pruneCache(ctx)
 
 	status, code, message := jobOutcome(ctx, runErr)

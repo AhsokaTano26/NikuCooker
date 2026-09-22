@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/AhsokaTano26/NikuCooker/internal/app"
 	"github.com/AhsokaTano26/NikuCooker/internal/pipeline"
+	"github.com/AhsokaTano26/NikuCooker/internal/project"
 	"github.com/AhsokaTano26/NikuCooker/internal/qc"
 )
 
@@ -126,8 +128,24 @@ type runSummary struct {
 	// QC is the quality report when the qc stage ran, and nil otherwise.
 	QC *qc.Report `json:"qc,omitempty"`
 
-	// Outputs are the files the run produced, as absolute paths.
-	Outputs []string `json:"outputs,omitempty"`
+	// Artifacts are the cache entries this run produced or reused, one per
+	// stage, as absolute paths.
+	//
+	// Reported under --json and not printed: they are cache internals, and a
+	// list that includes audio.wav and probe.json alongside the subtitles buries
+	// the two files a person actually wanted.
+	Artifacts []string `json:"artifacts,omitempty"`
+
+	// OutputDir is where the finished files were published.
+	OutputDir string        `json:"output_dir,omitempty"`
+	Outputs   []outputEntry `json:"outputs,omitempty"`
+}
+
+// outputEntry is one published file.
+type outputEntry struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 // summarise renders a plan as something printable.
@@ -170,12 +188,27 @@ func summarise(application *app.App, result *app.RunResult) (*runSummary, bool) 
 
 		if sp.Artifact != nil {
 			if path, err := application.Artifacts.For(sp.Artifact.ProjectID).Path(sp.Artifact); err == nil {
-				summary.Outputs = append(summary.Outputs, path)
+				summary.Artifacts = append(summary.Artifacts, path)
 			}
 		}
 	}
 
-	sort.Strings(summary.Outputs)
+	sort.Strings(summary.Artifacts)
+
+	// What a run exists to produce, published at the end of it. Read back from
+	// disk rather than reconstructed from the plan, so the listing is what is
+	// actually there.
+	if files, err := application.OutputFiles(result.ProjectID); err == nil && len(files) > 0 {
+		summary.OutputDir = project.OutputDir(application.DataDir(), result.ProjectID)
+		for _, file := range files {
+			summary.Outputs = append(summary.Outputs, outputEntry{
+				Name:      file.Name,
+				Path:      filepath.Join(summary.OutputDir, file.Name),
+				SizeBytes: file.SizeBytes,
+			})
+		}
+	}
+
 	return summary, failed
 }
 
@@ -217,9 +250,20 @@ func printSummary(cmd *cobra.Command, summary *runSummary) {
 	}
 
 	if len(summary.Outputs) > 0 {
-		fmt.Fprintln(out, "\n  artifacts:")
-		for _, path := range summary.Outputs {
-			fmt.Fprintf(out, "    %s\n", path)
+		fmt.Fprintf(out, "\n  output:\n    %s\n\n", summary.OutputDir)
+
+		// Padded to the longest name rather than to a fixed column, and by
+		// display width rather than by byte count — a filename is free to be
+		// longer than any column and to be full of characters that are two
+		// terminals wide.
+		width := 0
+		for _, file := range summary.Outputs {
+			if w := displayWidth(file.Name); w > width {
+				width = w
+			}
+		}
+		for _, file := range summary.Outputs {
+			fmt.Fprintf(out, "      %s  %s\n", pad(file.Name, width), formatBytes(file.SizeBytes))
 		}
 	}
 }

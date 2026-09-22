@@ -2,8 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { ApiError, api } from '@/api/client'
-import { formatDuration, useAsync } from '@/composables/useAsync'
+import { ApiError, api, type ProjectOutput } from '@/api/client'
+import { formatBytes, formatDuration, formatTime, useAsync } from '@/composables/useAsync'
 import { useEventStore, type ServerEvent } from '@/stores/events'
 import type { PipelineView, StageStatus, StageView } from '@/types/api'
 
@@ -13,6 +13,15 @@ const projectId = computed(() => String(route.params['id']))
 
 const project = useAsync(() => api.projects.get(projectId.value))
 const pipeline = useAsync(() => api.run.pipeline(projectId.value))
+
+/**
+ * What the last run produced.
+ *
+ * Refetched whenever the pipeline settles, because the files are published at
+ * the end of a run: a list fetched on mount would be empty for the whole of the
+ * first run and then stay empty until the page was reloaded.
+ */
+const outputs = useAsync(() => api.projects.outputs(projectId.value))
 
 /**
  * Live pipeline state, patched from the event stream.
@@ -82,7 +91,14 @@ function onStageProgress(event: ServerEvent): void {
 
 function onJobStatus(event: ServerEvent): void {
   const data = event.data as { status?: string }
-  if (data.status !== undefined) void project.run()
+  if (data.status === undefined) return
+
+  void project.run()
+
+  // The files are published just before this event is emitted, so this is the
+  // moment the list becomes complete. Refetching on the stage events instead
+  // would ask too early — the last stage settling is not the run being over.
+  void outputs.run()
 }
 
 /**
@@ -100,7 +116,7 @@ function scoped(handler: (event: ServerEvent) => void) {
 const unsubscribers: (() => void)[] = []
 
 onMounted(async () => {
-  await Promise.all([project.run(), pipeline.run()])
+  await Promise.all([project.run(), pipeline.run(), outputs.run()])
 
   unsubscribers.push(
     events.on('stage.status', scoped(onStageStatus)),
@@ -116,6 +132,7 @@ onMounted(async () => {
       live.value = null
       void project.run()
       void pipeline.run()
+      void outputs.run()
     }),
   )
 })
@@ -129,6 +146,7 @@ watch(projectId, () => {
   recentMessages.value = []
   void project.run()
   void pipeline.run()
+  void outputs.run()
 })
 
 const running = computed(() => current.value?.job?.status === 'running')
@@ -170,6 +188,12 @@ const STATUS_TONE: Record<StageStatus, string> = {
   failed: 'bg-status-failed',
   skipped: 'bg-status-pending/60',
   cancelled: 'bg-status-pending',
+}
+
+const KIND_LABEL: Record<ProjectOutput['kind'], string> = {
+  subtitle: '字幕',
+  video: '视频',
+  other: '其他',
 }
 
 const STATUS_LABEL: Record<StageStatus, string> = {
@@ -229,6 +253,48 @@ const STATUS_LABEL: Record<StageStatus, string> = {
         {{ actionError }}
       </p>
 
+      <!--
+        Above the pipeline, because it is the answer to the question someone
+        arrives with once a run has finished. Hidden entirely when there is
+        nothing: an empty box would read as "the run produced nothing", which
+        before the first run is true but not useful.
+      -->
+      <section
+        v-if="outputs.data.value && outputs.data.value.items.length"
+        class="rounded border border-line bg-surface-raised"
+      >
+        <header class="flex items-center justify-between border-b border-line px-4 py-2">
+          <h2 class="text-sm font-medium text-ink-muted">输出文件</h2>
+          <span class="text-xs text-ink-faint">{{ outputs.data.value.items.length }} 个</span>
+        </header>
+
+        <ul class="divide-y divide-line/60">
+          <li
+            v-for="file in outputs.data.value.items"
+            :key="file.name"
+            class="flex items-center justify-between gap-4 px-4 py-2.5"
+          >
+            <div class="min-w-0">
+              <p class="truncate text-sm">{{ file.name }}</p>
+              <p class="text-xs text-ink-faint">
+                {{ KIND_LABEL[file.kind] }} · {{ formatBytes(file.size_bytes) }} ·
+                {{ formatTime(file.modified_at) }}
+              </p>
+            </div>
+            <a
+              :href="api.projects.outputURL(projectId, file.name)"
+              class="shrink-0 rounded border border-line px-2 py-1 text-xs text-ink-muted transition hover:border-ink-faint hover:text-ink"
+            >
+              下载
+            </a>
+          </li>
+        </ul>
+
+        <p class="border-t border-line px-4 py-2 text-xs text-ink-faint">
+          文件在 <code class="font-mono">{{ outputs.data.value.dir }}</code>
+        </p>
+      </section>
+
       <section class="rounded border border-line bg-surface-raised">
         <header class="flex items-center justify-between border-b border-line px-4 py-2">
           <h2 class="text-sm font-medium text-ink-muted">Pipeline</h2>
@@ -279,7 +345,8 @@ const STATUS_LABEL: Record<StageStatus, string> = {
       </section>
 
       <p class="text-sm text-ink-faint">
-        字幕编辑与审校队列在 Phase 8 实现。
+        字幕编辑在「字幕编辑」，问题条目在「审校队列」。这两页读取的是数据库里的当前内容，
+        包含你的修改，与上面的输出文件（上一次运行的结果）是两回事。
       </p>
     </template>
   </div>

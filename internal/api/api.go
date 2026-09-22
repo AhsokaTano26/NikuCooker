@@ -111,9 +111,16 @@ func (s *Server) buildRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/projects/{id}/segments/{segmentID}/merge", s.mergeSegment)
 	mux.HandleFunc("POST /api/v1/projects/{id}/segments/{segmentID}/translate", s.translateSegment)
 
+	// What the last run published, and the files themselves. This is where a
+	// finished project's results are, as opposed to the artifact cache they
+	// were copied out of.
+	mux.HandleFunc("GET /api/v1/projects/{id}/outputs", s.listOutputs)
+	mux.HandleFunc("GET /api/v1/projects/{id}/outputs/{name}", s.downloadOutput)
+
 	// The current lines as a subtitle file, generated from the table rather
 	// than from an artifact — so it includes edits the user has not re-run the
-	// pipeline for.
+	// pipeline for. Not the same thing as the files above, which are what a run
+	// produced.
 	//
 	// Two routes rather than one with a wildcard suffix: a Go pattern's wildcard
 	// must be a whole path segment, and "subtitles.{format}" is not one. The
