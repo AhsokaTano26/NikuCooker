@@ -6,18 +6,7 @@ NikuCooker 是一个面向视频字幕制作的全自动 AI 处理流水线，�
 media processing run entirely on your machine; audio and video never leave it.
 Only subtitle text is sent to an LLM, and only to the provider you configure.
 
-> ## Status: Phase 0 — not usable yet
->
-> This repository currently contains a skeleton: the Go module and CLI shell,
-> the cross-language protocol types, the Python worker's entry point and
-> self-check, and the Vue application shell. **No stage, no API endpoint and no
-> pipeline is implemented.** Running the binary today produces version output
-> and nothing else.
->
-> The roadmap puts a working `nikucooker run video.mp4` at Phase 6. Until then,
-> nothing here will transcribe or translate anything.
-
-## What it will do
+## What it does
 
 ```
 media probe → audio extract → voice detection → speech recognition
@@ -25,9 +14,45 @@ media probe → audio extract → voice detection → speech recognition
 → quality control → subtitle generation → video render
 ```
 
-Targeting **Japanese → Simplified Chinese** first (anime, seiyuu programmes,
-live MC, interviews), with language treated as data so other pairs are additions
-rather than rewrites.
+Every stage is implemented and runs end to end: point it at a Japanese video and
+it produces translated `.srt` and `.ass` files, a quality report, and a
+subtitled video. Targeting **Japanese → Simplified Chinese** first (anime,
+seiyuu programmes, live MC, interviews), with language treated as data so other
+pairs are additions rather than rewrites.
+
+Two properties shape the design more than any other:
+
+- **Nothing is recomputed for free.** Every stage is content-addressed, and
+  translation is cached per line. Editing three lines and re-running
+  re-translates three lines; changing a prompt or a glossary entry invalidates
+  exactly what it affects.
+- **Your edits outrank the machine.** A line you corrected is never overwritten
+  by a later run, and a re-render uses the lines as you left them.
+
+## Quick start
+
+```bash
+make ai-install                  # create the Python environment
+make build                       # build the web application and the binary
+./nikucooker doctor              # check that this machine can run the pipeline
+
+./nikucooker project create --source /path/to/episode01.mkv
+./nikucooker run <project-id>
+./nikucooker serve               # then open http://localhost:8080
+```
+
+`nikucooker doctor` is the first thing to run on a new machine: it reports every
+prerequisite and, when something is missing, what to do about it.
+
+Translation needs a language model. Add an OpenAI-compatible provider through the
+web interface, or set it directly:
+
+```yaml
+translation:
+  base_url: https://api.example.com/v1
+  api_key: sk-...
+  model: some-model
+```
 
 ## Architecture, briefly
 
@@ -49,13 +74,14 @@ repository. What is published is the code and this file.
 
 ## Requirements
 
-- **Go** 1.25 or newer
+- **Go** 1.26 or newer
 - **Python** 3.12–3.14, managed with [uv](https://docs.astral.sh/uv/)
 - **Node** 24+ and **pnpm** 10+ (only to build the web interface)
 - **FFmpeg** and **ffprobe** on `PATH`
 
 Speech recognition runs on CPU everywhere, or on an NVIDIA GPU with CUDA 12.x.
-Apple Silicon runs on CPU: CTranslate2 has no Metal backend.
+Apple Silicon runs on CPU: CTranslate2 has no Metal backend, and `doctor` says so
+rather than silently falling back.
 
 ## Building
 
@@ -73,14 +99,15 @@ The recommended path for a server, or for anyone who would rather not manage a
 Python environment:
 
 ```bash
-docker compose up -d              # CPU
-docker compose --profile cuda up -d   # NVIDIA GPU
+docker compose up -d                        # CPU
+docker compose --profile cuda up -d cuda    # NVIDIA GPU
 ```
 
 Then open <http://localhost:8080>.
 
 The CUDA image is a separate build because it is several gigabytes larger; CPU
-users are never made to download it.
+users are never made to download it. Both mount `./data`, `./models` and
+`./config`, so switching between them keeps every project, model and setting.
 
 ## Development
 
@@ -94,6 +121,19 @@ make lint           # gofmt, go vet, ruff, ESLint, vue-tsc
 
 `make web-dev` runs the Vite dev server and proxies `/api` to a core on
 `127.0.0.1:8080`.
+
+## Configuration
+
+Settings come from five layers, lowest precedence first:
+
+```
+defaults → config file → environment → project overlay → CLI flags
+```
+
+The defaults are a complete, working configuration; a config file is only needed
+to change something. `NIKUCOOKER_CONFIG` names the file to read, and the
+individual `NIKUCOOKER_*` variables set single values — which is how the
+container image is configured without one.
 
 ## A note on the Python dependency set
 
