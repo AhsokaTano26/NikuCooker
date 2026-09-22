@@ -77,6 +77,15 @@ type StagePlan struct {
 	Reason   string
 	Err      error
 
+	// Blocked records that this stage did not run because an input it requires
+	// is missing, rather than because it was not selected or has no work to do.
+	//
+	// The distinction is what lets a caller answer "did this run do what I
+	// asked?" without parsing the human-readable Reason. A run that produced
+	// nothing because the user selected a stage whose input does not exist has
+	// failed, even though no stage errored.
+	Blocked bool
+
 	// externalInputs holds artifacts for dependencies that are not part of this
 	// run, resolved from the store — the range-selection case.
 	externalInputs map[string]*artifact.Artifact
@@ -182,6 +191,7 @@ func Build(ctx context.Context, opts Options) (*Plan, error) {
 		if reason, blocked := blockedBy(entry.stage, byName, opts.Only); blocked {
 			sp.State = StateSkipped
 			sp.Reason = reason
+			sp.Blocked = true
 			continue
 		}
 
@@ -198,6 +208,7 @@ func Build(ctx context.Context, opts Options) (*Plan, error) {
 		if missing := unsatisfied(entry.stage, byName, external); missing != "" {
 			sp.State = StateSkipped
 			sp.Reason = fmt.Sprintf("no artifact for input %q", missing)
+			sp.Blocked = true
 			continue
 		}
 

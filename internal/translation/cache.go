@@ -23,6 +23,10 @@ type KeyInputs struct {
 	// Source is the line being translated, after normalisation.
 	Source string
 
+	// Revision is the existing translation being improved, for a revising pass.
+	// Empty for an ordinary one.
+	Revision string
+
 	Style string
 
 	// Provider and Model distinguish two services offering the same model name.

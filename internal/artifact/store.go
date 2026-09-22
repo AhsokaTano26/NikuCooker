@@ -137,6 +137,20 @@ func (s *Store) Path(a *Artifact) (string, error) {
 	return filepath.Join(dir, primary), nil
 }
 
+// Dir returns the absolute directory holding an artifact's files.
+//
+// For a consumer that needs one of several files rather than the primary
+// payload — the subtitle stage writes an ASS file, an SRT file and a manifest,
+// and a renderer wants a specific one. It is the directory counterpart to Path,
+// and it exists so that the layout stays private to this package: a stage that
+// joined paths itself would be depending on that layout without saying so.
+func (s *Store) Dir(a *Artifact) (string, error) {
+	if a == nil {
+		return "", errors.New("artifact: cannot resolve the directory of a nil artifact")
+	}
+	return s.absDir(a.Path), nil
+}
+
 // Decode reads an artifact's primary payload into v.
 //
 // It exists so a stage can consume an upstream artifact without knowing how
@@ -250,6 +264,17 @@ func (w *Writer) Commit(ctx context.Context, result Result) (*Artifact, error) {
 
 	if result.Primary == "" {
 		return nil, errors.New("artifact: a result must name its primary payload file")
+	}
+	// Every artifact directory carries this package's own manifest, and Commit
+	// writes it after this check. A stage that named its payload the same thing
+	// would pass the existence check below and then have its payload silently
+	// replaced — the artifact would publish, the stage would report success, and
+	// the first consumer to read it would find a description of the artifact
+	// instead of its contents.
+	if result.Primary == manifestFileName {
+		return nil, fmt.Errorf(
+			"artifact: %q is reserved for this package's own manifest; name the payload something else",
+			manifestFileName)
 	}
 	if _, err := os.Stat(filepath.Join(w.tmpDir, result.Primary)); err != nil {
 		return nil, fmt.Errorf("artifact: declared primary %q is not present: %w", result.Primary, err)
@@ -475,7 +500,12 @@ func (s *Store) SweepTempDirectories() (int, error) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-func manifestPath(dir string) string { return filepath.Join(dir, "manifest.json") }
+// manifestFileName is the file this package writes into every artifact
+// directory to describe it. It is reserved: no stage may name its payload this,
+// because Commit would overwrite it.
+const manifestFileName = "manifest.json"
+
+func manifestPath(dir string) string { return filepath.Join(dir, manifestFileName) }
 
 func readFile(path string) ([]byte, error) {
 	raw, err := os.ReadFile(path)

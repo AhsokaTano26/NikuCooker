@@ -27,6 +27,12 @@ type promptData struct {
 type linePayload struct {
 	ID         string `json:"id"`
 	SourceText string `json:"source_text"`
+
+	// CurrentTranslation appears only in a revising pass, and is what that pass
+	// is asked to improve. It is omitted rather than sent empty, so the ordinary
+	// prompt is byte-identical to what it was before revising existed — which is
+	// what keeps the translation cache valid across the change.
+	CurrentTranslation string `json:"current_translation,omitempty"`
 }
 
 // batchPayload is the document handed to the model as the work to do.
@@ -45,8 +51,9 @@ func renderLines(lines []*line, sourceLanguage, targetLanguage string) (string, 
 	}
 	for _, item := range lines {
 		payload.Lines = append(payload.Lines, linePayload{
-			ID:         item.segment.ID,
-			SourceText: item.segment.SourceText,
+			ID:                 item.segment.ID,
+			SourceText:         item.segment.SourceText,
+			CurrentTranslation: item.revision,
 		})
 	}
 

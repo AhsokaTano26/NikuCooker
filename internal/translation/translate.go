@@ -79,6 +79,13 @@ type Options struct {
 	// first attempt.
 	MaxAttempts int
 
+	// Revise reprocesses lines that already carry a translation, replacing it.
+	//
+	// Off by default, because the ordinary run must not overwrite a user's
+	// edit. It is what the polish pass turns on: its input is the existing
+	// translation, and its output supersedes it.
+	Revise bool
+
 	// ContextDocument is the analysis of the work, produced by an earlier stage.
 	// Empty means no context is available and the prompt says so.
 	ContextDocument string
@@ -187,6 +194,11 @@ type line struct {
 	// make the cache depend on the batch size, so changing an unrelated setting
 	// would silently discard every cached translation.
 	glossaryHash string
+
+	// revision is the existing translation this line is being asked to improve.
+	// It is part of the cache key because revising one translation and revising
+	// a different one are different requests.
+	revision string
 }
 
 // Translate translates the segments in place.
@@ -310,8 +322,21 @@ func (t *Translator) plan(
 
 		// A line the user has already translated or edited is not
 		// retranslated. Re-running the stage must not undo their work.
+		//
+		// A revising pass is the exception, and it is explicit: it takes the
+		// existing translation as its input and produces a replacement, so
+		// skipping what is already translated would leave it with nothing to do.
+		revision := ""
 		if segment.TranslatedText != nil {
-			continue
+			if !opts.Revise {
+				continue
+			}
+			revision = strings.TrimSpace(*segment.TranslatedText)
+			if revision == "" {
+				// Nothing to revise. The ordinary path would translate it, and
+				// so does this one.
+				revision = ""
+			}
 		}
 
 		applicable := glossary.Match(candidates, []string{segment.SourceText})
@@ -322,6 +347,7 @@ func (t *Translator) plan(
 
 		key, err := DeriveKey(KeyInputs{
 			Source:        normaliseSource(segment.SourceText),
+			Revision:      revision,
 			Style:         opts.Style,
 			Provider:      t.providerName,
 			Model:         t.client.Model(),
@@ -337,6 +363,7 @@ func (t *Translator) plan(
 			segment:      segment,
 			key:          key,
 			glossaryHash: glossaryHash,
+			revision:     revision,
 		})
 	}
 

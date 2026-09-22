@@ -352,6 +352,9 @@ type ArtifactReader interface {
 	// Path resolves an artifact's primary payload to an absolute path, for
 	// stages that hand the file to an external process.
 	Path(a *artifact.Artifact) (string, error)
+	// Dir resolves the directory holding an artifact's files, for a stage that
+	// needs one of several rather than the primary payload.
+	Dir(a *artifact.Artifact) (string, error)
 }
 
 // InputPath resolves the primary payload of a named upstream stage.
@@ -377,6 +380,29 @@ func (e *Env) ReadInput(producer string, v any) error {
 		return errors.New("stage: no artifact reader is available")
 	}
 	return e.Artifacts.Decode(a, v)
+}
+
+// ReadOptional decodes an optional dependency's payload when it arrived.
+//
+// It reports whether the input was present rather than returning an error for
+// its absence, because absence is the normal case for a stage that declared a
+// dependency optional. A caller that ignores the boolean is choosing to treat
+// the input as required, which `ReadInput` already expresses.
+func (e *Env) ReadOptional(producer string, v any) (bool, error) {
+	a, ok := e.Inputs[producer]
+	if !ok || a == nil {
+		return false, nil
+	}
+	if e.Artifacts == nil {
+		return false, errors.New("stage: no artifact reader is available")
+	}
+	if err := e.Artifacts.Decode(a, v); err != nil {
+		// Present but unreadable is a different situation from absent, and is
+		// reported: silently falling back would hide a corrupt artifact behind
+		// output that looks fine.
+		return false, fmt.Errorf("stage: read %q: %w", producer, err)
+	}
+	return true, nil
 }
 
 // Clock is the subset of time that stages use.

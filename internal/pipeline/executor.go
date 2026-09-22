@@ -82,6 +82,7 @@ func Run(ctx context.Context, plan *Plan, opts Options, obs Observer) error {
 		if reason, blocked := blockedBy(sp.Stage, byName, opts.Only); blocked {
 			sp.State = StateSkipped
 			sp.Reason = reason
+			sp.Blocked = true
 			obs.StageSettled(ctx, sp)
 			continue
 		}
@@ -108,6 +109,7 @@ func Run(ctx context.Context, plan *Plan, opts Options, obs Observer) error {
 		if missing != "" {
 			sp.State = StateSkipped
 			sp.Reason = fmt.Sprintf("no artifact for input %q", missing)
+			sp.Blocked = true
 			obs.StageSettled(ctx, sp)
 			continue
 		}

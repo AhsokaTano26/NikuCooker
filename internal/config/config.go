@@ -24,6 +24,7 @@ type Config struct {
 	Pipeline    Pipeline    `yaml:"pipeline"`
 	AI          AI          `yaml:"ai"`
 	Audio       Audio       `yaml:"audio"`
+	Media       Media       `yaml:"media"`
 	VAD         VAD         `yaml:"vad"`
 	ASR         ASR         `yaml:"asr"`
 	Subtitle    Subtitle    `yaml:"subtitle"`
@@ -67,10 +68,37 @@ type Pipeline struct {
 	Disabled []string `yaml:"disabled"`
 }
 
+// Media configures the FFmpeg integration.
+type Media struct {
+	// FFmpegPath and FFprobePath point at the binaries. Empty means resolve
+	// them from PATH, which is right for a normal install and wrong for a
+	// bundled build or a machine with several FFmpeg builds on it.
+	FFmpegPath  string `yaml:"ffmpeg_path"`
+	FFprobePath string `yaml:"ffprobe_path"`
+
+	// Timeout bounds a single FFmpeg invocation, as a duration string.
+	//
+	// Zero means no limit, which is the default and the deliberate choice: a
+	// burn-in of a feature-length film on a CPU encoder is legitimately an hour
+	// of work, and a timeout that fires on a slow machine turns a slow render
+	// into a failed one. The probe is bounded separately and internally,
+	// because a probe that has not answered in a minute is not going to.
+	Timeout time.Duration `yaml:"timeout"`
+}
+
 // AI configures the Python worker runtime.
 type AI struct {
 	// Python is an explicit interpreter path, or "auto" to resolve one.
 	Python string `yaml:"python"`
+
+	// Dir is the directory containing the nikucooker_ai package. Empty means
+	// resolve it: alongside the executable first, then the working directory.
+	Dir string `yaml:"dir"`
+
+	// Args are the arguments the worker is launched with. Almost nobody should
+	// change this; it exists because a bundled build may need to launch the
+	// worker differently from a checkout.
+	Args []string `yaml:"args"`
 	// PythonVersion is the accepted interpreter range. It is a range rather
 	// than a minimum because a too-new Python is as unusable as a too-old one:
 	// the AI dependency set has a ceiling set by CTranslate2's wheel lag.
@@ -289,6 +317,9 @@ func Default() *Config {
 		},
 		AI: AI{
 			Python: "auto",
+			// The worker is run as a module, which is what keeps its import
+			// path independent of the working directory.
+			Args: []string{"-m", "nikucooker_ai"},
 			// Verified against real wheels on all four platform targets; the
 			// ceiling is CTranslate2's. See docs/dependency-audit.md §6.
 			PythonVersion: ">=3.12,<3.15",
@@ -297,6 +328,12 @@ func Default() *Config {
 			SampleRate: 16000,
 			HighpassHz: 60,
 			Loudnorm:   false,
+		},
+		Media: Media{
+			// No timeout by default. See the field's note: a legitimate render
+			// of a long film is slower than any fixed limit that would also
+			// catch a hang.
+			Timeout: 0,
 		},
 		VAD: VAD{
 			Enabled:      true,

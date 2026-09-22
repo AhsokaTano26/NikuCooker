@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,12 +11,10 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/server"
 )
 
-func newServeCmd() *cobra.Command {
+func newServeCmd(g *globals) *cobra.Command {
 	var (
-		host      string
-		port      int
-		logLevel  string
-		logFormat string
+		host string
+		port int
 	)
 
 	cmd := &cobra.Command{
@@ -29,7 +26,7 @@ The web application is embedded in this binary, so there is nothing else to
 install or point at. The API lives under /api/v1 on the same origin.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			logger, err := newLogger(cmd, logLevel, logFormat)
+			logger, err := g.logger(cmd)
 			if err != nil {
 				return err
 			}
@@ -58,8 +55,6 @@ install or point at. The API lives under /api/v1 on the same origin.`,
 	cmd.Flags().StringVar(&host, "host", "127.0.0.1",
 		"address to bind. The default is loopback: this build has no authentication")
 	cmd.Flags().IntVar(&port, "port", 8080, "port to bind")
-	cmd.Flags().StringVar(&logLevel, "log-level", "info", "log level: debug, info, warn, error")
-	cmd.Flags().StringVar(&logFormat, "log-format", "text", "log format: text or json")
 
 	return cmd
 }
@@ -72,38 +67,4 @@ func displayAddr(host string, port int) string {
 	default:
 		return fmt.Sprintf("%s:%d", host, port)
 	}
-}
-
-// newLogger builds the structured logger.
-//
-// Fields carried here — component, and later project_id, job_id and stage — are
-// what make a log line answerable to "which job, doing what, where".
-func newLogger(cmd *cobra.Command, level, format string) (*slog.Logger, error) {
-	var lvl slog.Level
-	switch level {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "info":
-		lvl = slog.LevelInfo
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		return nil, fmt.Errorf("invalid --log-level %q: expected debug, info, warn or error", level)
-	}
-
-	opts := &slog.HandlerOptions{Level: lvl}
-
-	var handler slog.Handler
-	switch format {
-	case "text":
-		handler = slog.NewTextHandler(cmd.ErrOrStderr(), opts)
-	case "json":
-		handler = slog.NewJSONHandler(cmd.ErrOrStderr(), opts)
-	default:
-		return nil, fmt.Errorf("invalid --log-format %q: expected text or json", format)
-	}
-
-	return slog.New(handler).With("component", "core"), nil
 }
