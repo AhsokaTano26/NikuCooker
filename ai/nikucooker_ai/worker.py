@@ -16,6 +16,7 @@ import argparse
 import importlib.util
 import json
 import os
+import pathlib
 import platform
 import queue
 import re
@@ -27,6 +28,7 @@ from collections.abc import Callable
 from typing import IO, Any
 
 from nikucooker_ai import SPEAKS_PROTOCOL_MAX, SPEAKS_PROTOCOL_MIN, __version__
+from nikucooker_ai.models import ModelManager
 from nikucooker_ai.protocol import (
     ProtocolDecodeError,
     ProtocolError,
@@ -37,12 +39,17 @@ from nikucooker_ai.protocol import (
 from nikucooker_ai.protocol.errors import ErrorCode, RequestFailed
 from nikucooker_ai.protocol.models import (
     ASRCaps,
+    ASRResult,
+    ASRTranscribeParams,
+    ASRTranscribeResult,
     CancelResult,
     Capabilities,
     CapabilitiesResult,
     DeviceInfo,
     HealthResult,
     LoadedModel,
+    ModelLoadParams,
+    ModelUnloadParams,
     ProgressEvent,
     ProtocolSpan,
     Providers,
@@ -50,6 +57,7 @@ from nikucooker_ai.protocol.models import (
     Request,
     ResultEvent,
     ShutdownResult,
+    VADDetectParams,
 )
 from nikucooker_ai.protocol.schema import schema_digest
 
@@ -121,6 +129,11 @@ class Worker:
         self._loaded: list[LoadedModel] = []
         self._inflight: dict[str, Inflight] = {}
         self._lock = threading.Lock()
+
+        # The model manager is created eagerly: it holds no models until one is
+        # loaded, and deferring it would mean the first request racing its own
+        # initialisation.
+        self.models = ModelManager()
 
         self._queue: queue.Queue[Request | None] = queue.Queue(maxsize=QUEUE_DEPTH)
         self._should_stop = threading.Event()
@@ -420,13 +433,157 @@ def _handle_debug_delay(worker: Worker, request: Request, token: CancelToken) ->
     return {"slept_s": seconds, "silent": silent}
 
 
-#: Data methods this build implements. Everything else is UNSUPPORTED_METHOD.
-#:
-#: vad.detect, asr.transcribe and model.* arrive with the inference providers;
-#: until then they are absent rather than stubbed, so a caller gets a named
-#: error instead of a fake result.
+def _handle_model_load(worker: Worker, request: Request, token: CancelToken) -> dict[str, Any]:
+    """Makes a model resident and reports where it landed.
+
+    Loading is explicit rather than implicit inside transcription so that a
+    multi-minute load is not hidden inside a progress bar, and so that "which
+    device did it actually use" is answerable before the work starts.
+    """
+    params = ModelLoadParams.model_validate(request.params)
+    worker.emit_progress(request.id, 0.0, f"loading {params.name}")
+
+    result = worker.models.load(
+        kind=params.kind,
+        name=params.name,
+        device=params.device,
+        compute_type=params.compute_type,
+        model_path=params.model_path,
+    )
+    worker.emit_progress(request.id, 1.0, f"{params.name} ready on {result.device}")
+    return result.model_dump(mode="json", exclude_none=True)
+
+
+def _handle_model_unload(worker: Worker, request: Request, token: CancelToken) -> dict[str, Any]:
+    params = ModelUnloadParams.model_validate(request.params)
+    result = worker.models.unload(kind=params.kind, name=params.name)
+    return result.model_dump(mode="json", exclude_none=True)
+
+
+def _handle_model_list_loaded(
+    worker: Worker, request: Request, token: CancelToken
+) -> dict[str, Any]:
+    return worker.models.list_loaded().model_dump(mode="json", exclude_none=True)
+
+
+def _handle_vad_detect(worker: Worker, request: Request, token: CancelToken) -> dict[str, Any]:
+    params = VADDetectParams.model_validate(request.params)
+
+    result = worker.models.detect_speech(
+        audio_path=params.audio_path,
+        threshold=params.threshold,
+        min_speech_ms=params.min_speech_ms,
+        min_silence_ms=params.min_silence_ms,
+        speech_pad_ms=params.speech_pad_ms,
+        max_speech_s=params.max_speech_s,
+        progress=lambda fraction, message: worker.emit_progress(request.id, fraction, message),
+        check_cancelled=token.check,
+    )
+    return result.model_dump(mode="json", exclude_none=True)
+
+
+def _handle_asr_transcribe(worker: Worker, request: Request, token: CancelToken) -> dict[str, Any]:
+    """Transcribes audio, returning segments inline or by path.
+
+    The two forms are mutually exclusive, and the summary always says which was
+    used: a caller that reads neither is a caller that silently produces an
+    empty transcript.
+
+    Compute type and model path are absent here on purpose. They belong to
+    model.load, which the core sends first — so the device decision is made and
+    reported once, rather than being re-derived per request and potentially
+    disagreeing.
+    """
+    params = ASRTranscribeParams.model_validate(request.params)
+
+    result = worker.models.transcribe(
+        audio_path=params.audio_path,
+        model=params.model,
+        language=params.language,
+        device=params.device,
+        beam_size=params.beam_size,
+        temperature=params.temperature,
+        condition_on_previous_text=params.condition_on_previous_text,
+        # Absent means "yes": word timings are what subtitle segmentation is
+        # built on, so defaulting them off would produce a transcript the rest
+        # of the pipeline cannot use.
+        word_timestamps=True if params.word_timestamps is None else params.word_timestamps,
+        initial_prompt=params.initial_prompt,
+        vad_regions=params.vad_regions or [],
+        progress=lambda fraction, message: worker.emit_progress(request.id, fraction, message),
+        check_cancelled=token.check,
+    )
+
+    word_count = sum(len(segment.words) for segment in result.segments)
+    device, compute_type = _resolved_device(worker, params.model)
+
+    summary = ASRTranscribeResult(
+        language=result.language,
+        language_probability=result.language_probability,
+        duration=result.duration,
+        segment_count=len(result.segments),
+        word_count=word_count,
+        device=device,
+        compute_type=compute_type,
+        model=params.model,
+    )
+
+    if params.result_path:
+        # The escape hatch for large results: pipe traffic stays bounded
+        # regardless of media length, which a two-hour transcript would
+        # otherwise exceed by a factor of thirty.
+        _write_result(params.result_path, result)
+        summary.result_path = params.result_path
+    else:
+        summary.segments = result.segments
+
+    return summary.model_dump(mode="json", exclude_none=True)
+
+
+def _resolved_device(worker: Worker, model: str) -> tuple[str, str | None]:
+    """Reports the device a model is actually resident on.
+
+    Not what was requested: a request for cuda on a machine without one lands on
+    cpu, and the caller needs to know that, because it is the difference between
+    a two-minute job and a forty-minute one.
+    """
+    for entry in worker.models.list_loaded().models:
+        if entry.name == model:
+            return entry.device, entry.compute_type
+    return "unknown", None
+
+
+def _write_result(path: str, result: ASRResult) -> None:
+    """Writes the full transcript to a file for the core to read."""
+    target = pathlib.Path(path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Written to a temporary name and renamed, so a reader never sees a
+        # half-written transcript.
+        temporary = target.with_suffix(target.suffix + ".partial")
+        temporary.write_text(
+            json.dumps(result.model_dump(mode="json", exclude_none=True), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.replace(temporary, target)
+    except OSError as exc:
+        raise RequestFailed(
+            ProtocolError.make(
+                ErrorCode.INTERNAL,
+                f"could not write the transcript to {path}: {exc}",
+                details={"path": path},
+            )
+        ) from exc
+
+
+#: Data methods this build implements.
 DATA_METHODS: dict[str, Callable[[Worker, Request, CancelToken], dict[str, Any] | None]] = {
     "debug.delay": _handle_debug_delay,
+    "model.load": _handle_model_load,
+    "model.unload": _handle_model_unload,
+    "model.list_loaded": _handle_model_list_loaded,
+    "vad.detect": _handle_vad_detect,
+    "asr.transcribe": _handle_asr_transcribe,
 }
 
 
