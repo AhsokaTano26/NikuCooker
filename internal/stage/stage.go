@@ -13,11 +13,14 @@ package stage
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
 	"github.com/AhsokaTano26/NikuCooker/internal/config"
+	"github.com/AhsokaTano26/NikuCooker/internal/media"
 )
 
 // Spec is a stage's identity and wiring.
@@ -92,6 +95,13 @@ type Env struct {
 	ProjectDir string
 	JobID      string
 
+	// SourcePath is the absolute path to the project's source media.
+	SourcePath string
+
+	// Media is the FFmpeg service. It is the only way a stage reaches FFmpeg,
+	// and the only place arguments are constructed.
+	Media *media.Service
+
 	// Config is the fully resolved configuration, including this project's
 	// overlay.
 	Config *config.Config
@@ -99,6 +109,10 @@ type Env struct {
 	// Inputs holds the upstream artifacts this stage declared in Spec.Depends,
 	// keyed by producer stage name.
 	Inputs map[string]*artifact.Artifact
+
+	// Artifacts reads upstream payloads. A stage uses this rather than joining
+	// paths, so the on-disk layout stays private to the artifact package.
+	Artifacts ArtifactReader
 
 	// OutDir is where the stage writes its payload. It is a temporary
 	// directory; the pipeline publishes it on success.
@@ -160,6 +174,24 @@ func (e *Env) ReportProgress(fraction float64, message string) {
 // that would be an undeclared interface between stages, and it would not be
 // part of the cache key.
 type Result = artifact.Result
+
+// ArtifactReader loads artifact payloads.
+type ArtifactReader interface {
+	Decode(a *artifact.Artifact, v any) error
+}
+
+// ReadInput decodes the primary payload of the artifact produced by a named
+// upstream stage.
+func (e *Env) ReadInput(producer string, v any) error {
+	a, ok := e.Inputs[producer]
+	if !ok || a == nil {
+		return fmt.Errorf("stage: no artifact from %q; it is declared in Depends but was not supplied", producer)
+	}
+	if e.Artifacts == nil {
+		return errors.New("stage: no artifact reader is available")
+	}
+	return e.Artifacts.Decode(a, v)
+}
 
 // Clock is the subset of time that stages use.
 type Clock interface {

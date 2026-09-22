@@ -140,9 +140,13 @@ func runStage(
 
 	env := &stage.Env{
 		ProjectID:         opts.ProjectID,
+		ProjectDir:        opts.Store.ProjectDir(),
 		JobID:             opts.JobID,
+		SourcePath:        opts.SourcePath,
+		Media:             opts.Media,
 		Config:            opts.Config,
 		Inputs:            inputs,
+		Artifacts:         opts.Store,
 		Progress:          throttled(sp, obs, ctx),
 		Log:               log,
 		Clock:             stage.SystemClock{},

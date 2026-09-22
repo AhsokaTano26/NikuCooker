@@ -17,6 +17,7 @@ import (
 
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
 	"github.com/AhsokaTano26/NikuCooker/internal/config"
+	"github.com/AhsokaTano26/NikuCooker/internal/media"
 	"github.com/AhsokaTano26/NikuCooker/internal/stage"
 )
 
@@ -108,6 +109,12 @@ type Options struct {
 	// caller, because it is read from disk and every stage that needs it would
 	// otherwise read it again.
 	SourceFingerprint string
+
+	// SourcePath is the absolute path to the project's source media.
+	SourcePath string
+
+	// Media is the FFmpeg service handed to stages.
+	Media *media.Service
 
 	// Force ignores the artifact cache and recomputes everything selected.
 	Force bool
@@ -223,9 +230,13 @@ func keyFor(
 
 	env := &stage.Env{
 		ProjectID:         opts.ProjectID,
+		ProjectDir:        opts.Store.ProjectDir(),
 		JobID:             opts.JobID,
+		SourcePath:        opts.SourcePath,
+		Media:             opts.Media,
 		Config:            opts.Config,
 		Inputs:            inputs,
+		Artifacts:         opts.Store,
 		SourceFingerprint: opts.SourceFingerprint,
 		Clock:             stage.SystemClock{},
 	}

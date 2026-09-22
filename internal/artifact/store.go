@@ -27,6 +27,9 @@ func NewStore(db *database.DB, projectID, projectDir string) *Store {
 	return &Store{db: db, projectID: projectID, projectDir: projectDir}
 }
 
+// ProjectDir reports the project directory this store writes into.
+func (s *Store) ProjectDir() string { return s.projectDir }
+
 // ArtifactsDir is where a project's artifacts live, relative to the project
 // directory.
 const ArtifactsDir = "artifacts"
@@ -115,6 +118,32 @@ func (s *Store) Latest(ctx context.Context, stage string) (*Artifact, error) {
 		return nil, fmt.Errorf("artifact: latest for stage %s: %w", stage, err)
 	}
 	return s.Lookup(ctx, key)
+}
+
+// Decode reads an artifact's primary payload into v.
+//
+// It exists so a stage can consume an upstream artifact without knowing how
+// artifacts are laid out on disk. The moment a stage joins paths itself, the
+// layout stops being an implementation detail of this package.
+func (s *Store) Decode(a *Artifact, v any) error {
+	if a == nil {
+		return errors.New("artifact: cannot decode a nil artifact")
+	}
+
+	dir := s.absDir(a.Path)
+	primary, err := PrimaryOf(dir)
+	if err != nil {
+		return fmt.Errorf("artifact: read manifest of %s: %w", a.ID, err)
+	}
+
+	raw, err := readFile(filepath.Join(dir, primary))
+	if err != nil {
+		return fmt.Errorf("artifact: read %s of %s: %w", primary, a.ID, err)
+	}
+	if err := json.Unmarshal(raw, v); err != nil {
+		return fmt.Errorf("artifact: decode %s of %s: %w", primary, a.ID, err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
