@@ -13,6 +13,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -425,6 +426,53 @@ func Default() *Config {
 			Format: "text",
 		},
 	}
+}
+
+// ResolvePaths makes the configured directories absolute.
+//
+// A relative path is a perfectly reasonable thing to write — `./data` next to
+// the binary — but it is only meaningful next to the working directory it was
+// written for. That directory belongs to this process, and the paths do not
+// stay here: they are handed to the Python worker, which runs with its own
+// working directory, and to FFmpeg. A relative path that crosses either
+// boundary resolves against something else and lands on a file that is not
+// there.
+//
+// Resolved once, at load, so that everything downstream — artifacts, models,
+// the database, the upload staging area — derives an absolute path without
+// having to remember to.
+func (c *Config) ResolvePaths() error {
+	absolute := func(key, value string) (string, error) {
+		if value == "" || filepath.IsAbs(value) {
+			return value, nil
+		}
+
+		resolved, err := filepath.Abs(value)
+		if err != nil {
+			// Only reachable when the working directory cannot be read, which
+			// is worth saying plainly: the fix is a different cwd rather than a
+			// different configuration.
+			return "", fmt.Errorf("%s: cannot resolve %q against the working directory: %w", key, value, err)
+		}
+		return resolved, nil
+	}
+
+	dataDir, err := absolute("storage.data_dir", c.Storage.DataDir)
+	if err != nil {
+		return err
+	}
+	c.Storage.DataDir = dataDir
+
+	// Model paths are passed to the worker by name, which the worker resolves
+	// under the directory it is given — so this one crosses the same boundary
+	// and needs the same treatment.
+	modelDir, err := absolute("storage.model_dir", c.Storage.ModelDir)
+	if err != nil {
+		return err
+	}
+	c.Storage.ModelDir = modelDir
+
+	return nil
 }
 
 // Validate rejects a configuration that would fail later and less clearly.

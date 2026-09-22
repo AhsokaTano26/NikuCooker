@@ -248,3 +248,49 @@ func TestConfigPathFromEnvironment(t *testing.T) {
 		t.Error("ConfigPath returned a value with no NIKUCOOKER_CONFIG set")
 	}
 }
+
+// A relative directory is resolved once, here, against the working directory
+// that wrote it.
+//
+// It matters because these paths do not stay in this process. They are handed
+// to the Python worker, which runs with a working directory of its own, so a
+// relative path crossing that boundary resolves against something else and
+// every artifact path derived from it points at a file that does not exist.
+func TestResolvePathsMakesConfiguredDirectoriesAbsolute(t *testing.T) {
+	cfg := Default()
+	cfg.Storage.DataDir = filepath.Join(".", "data")
+	cfg.Storage.ModelDir = filepath.Join(".", "models")
+
+	if err := cfg.ResolvePaths(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !filepath.IsAbs(cfg.Storage.DataDir) {
+		t.Errorf("data_dir = %q, want an absolute path", cfg.Storage.DataDir)
+	}
+	if !filepath.IsAbs(cfg.Storage.ModelDir) {
+		t.Errorf("model_dir = %q, want an absolute path", cfg.Storage.ModelDir)
+	}
+
+	// Resolved against the working directory, not merely prefixed with a
+	// separator: the value has to name where the user meant.
+	if base := filepath.Base(cfg.Storage.DataDir); base != "data" {
+		t.Errorf("data_dir = %q, want it to still end in %q", cfg.Storage.DataDir, "data")
+	}
+}
+
+// An absolute path is left exactly as written. Rewriting one would be a
+// surprise, and on a system with symlinked directories it would be a different
+// place.
+func TestResolvePathsLeavesAbsolutePathsAlone(t *testing.T) {
+	cfg := Default()
+	cfg.Storage.DataDir = filepath.Join(string(filepath.Separator), "srv", "nikucooker")
+
+	if err := cfg.ResolvePaths(); err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Storage.DataDir != filepath.Join(string(filepath.Separator), "srv", "nikucooker") {
+		t.Errorf("data_dir = %q, want it unchanged", cfg.Storage.DataDir)
+	}
+}

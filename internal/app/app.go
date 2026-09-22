@@ -170,6 +170,22 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 
+	// Before anything derives a path from the configuration. A relative
+	// data_dir would otherwise be resolved differently by the Python worker,
+	// whose working directory is its own, and every artifact path handed across
+	// that boundary would point at nothing.
+	if err := cfg.ResolvePaths(); err != nil {
+		return nil, err
+	}
+
+	// Before anything derives a path from the configuration. A relative
+	// data_dir would otherwise be resolved differently by the Python worker,
+	// whose working directory is its own, and every artifact path handed across
+	// that boundary would point at nothing.
+	if err := cfg.ResolvePaths(); err != nil {
+		return nil, err
+	}
+
 	if err := os.MkdirAll(cfg.Storage.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("app: create the data directory %s: %w", cfg.Storage.DataDir, err)
 	}
