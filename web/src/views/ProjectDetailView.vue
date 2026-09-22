@@ -230,6 +230,7 @@ const STATUS_TONE: Record<StageStatus, string> = {
 const KIND_LABEL: Record<ProjectOutput['kind'], string> = {
   subtitle: '字幕',
   video: '视频',
+  log: '日志',
   other: '其他',
 }
 
