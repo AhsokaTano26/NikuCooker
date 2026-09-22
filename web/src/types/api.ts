@@ -99,6 +99,11 @@ export interface StageView {
   artifact_id: string | null
   duration_ms?: number
   attempt?: number
+
+  /** Why a stage did not run. Set when the stage was skipped, and empty
+   *  otherwise — a stage that completed has nothing to explain. */
+  reason?: string
+
   error_code?: string
   error_message?: string
   metadata?: Record<string, unknown>

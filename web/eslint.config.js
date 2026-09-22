@@ -2,6 +2,39 @@ import js from '@eslint/js'
 import pluginVue from 'eslint-plugin-vue'
 import tseslint from 'typescript-eslint'
 
+/**
+ * The browser globals this application uses.
+ *
+ * Declared rather than pulled from the `globals` package: the list is short, it
+ * is visible in one place, and a dependency that ships a thousand entries to
+ * cover seventy of them is a dependency to keep updated for no gain.
+ *
+ * They are declared for every file rather than only for `.vue`, because the
+ * event store and the API client both reach for `EventSource` and `fetch` and
+ * neither is a component.
+ */
+const browserGlobals = {
+  window: 'readonly',
+  document: 'readonly',
+  navigator: 'readonly',
+  location: 'readonly',
+  fetch: 'readonly',
+  EventSource: 'readonly',
+  URL: 'readonly',
+  URLSearchParams: 'readonly',
+  AbortController: 'readonly',
+  AbortSignal: 'readonly',
+  setTimeout: 'readonly',
+  clearTimeout: 'readonly',
+  setInterval: 'readonly',
+  clearInterval: 'readonly',
+  queueMicrotask: 'readonly',
+  confirm: 'readonly',
+  alert: 'readonly',
+  requestAnimationFrame: 'readonly',
+  console: 'readonly',
+}
+
 export default tseslint.config(
   { ignores: ['dist/**', 'node_modules/**', 'coverage/**'] },
 
@@ -10,8 +43,13 @@ export default tseslint.config(
   ...pluginVue.configs['flat/recommended'],
 
   {
+    languageOptions: { globals: browserGlobals },
+  },
+
+  {
     files: ['**/*.vue'],
     languageOptions: {
+      globals: browserGlobals,
       parserOptions: {
         // The SFC parser delegates <script lang="ts"> to the TypeScript parser.
         // Without this, type-only syntax fails to parse.
