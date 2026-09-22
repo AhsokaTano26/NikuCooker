@@ -35,6 +35,14 @@ type uploadView struct {
 // extra part is an error rather than a coin flip over which file was meant.
 const uploadFile = "file"
 
+// createUpload accepts a file into the staging area.
+//
+// Open by default, unlike the server-side path source, and the asymmetry is
+// deliberate rather than an oversight. Reading a path grants access to
+// everything the process can see; accepting an upload grants only the right to
+// write into a directory this server names, under a name it derives, up to a
+// size it chooses. Nothing is read, nothing existing is overwritten, and the
+// limit is enforced while streaming instead of after.
 func (s *Server) createUpload(w http.ResponseWriter, r *http.Request) {
 	limit := s.app.Config().Server.MaxUploadBytes
 
