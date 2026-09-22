@@ -160,6 +160,11 @@ const problems: Problem[] = [
         还没确认这台机器能不能干这活？命令行跑一次 <span class="font-mono">nikucooker doctor</span>，
         它会逐项报告缺什么、怎么补。
       </p>
+      <p class="mt-2 text-xs text-ink-faint">
+        <span class="font-mono">nikucooker serve</span> 启动成功后会自己打开这个页面。
+        不想让它打开就加 <span class="font-mono">--open=false</span>；
+        在没有桌面环境的机器上（比如容器里）它本来就不会打开，也不会报错。
+      </p>
     </section>
 
     <section class="rounded border border-line bg-surface-raised p-4">
