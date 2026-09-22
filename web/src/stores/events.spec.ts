@@ -244,4 +244,38 @@ describe('event store', () => {
 
     expect(events.connection).toBe('resyncing')
   })
+
+  // Once the server has been asked to stop, the stream failing is the expected
+  // outcome rather than a fault to recover from. Reconnecting would spend the
+  // whole backoff schedule against a port with nothing behind it, and the
+  // interface would report "重连中" for a server the user deliberately turned off.
+  it('stops reconnecting once the server has been shut down', () => {
+    const events = store()
+    events.connect()
+
+    const before = FakeEventSource.instances.length
+    events.markStopped()
+
+    // The stream dying is what actually happens next, and it must not schedule
+    // anything.
+    latest().onerror?.(new Event('error'))
+    vi.advanceTimersByTime(60_000)
+
+    expect(events.connection).toBe('stopped')
+    expect(events.isShuttingDown).toBe(true)
+    expect(FakeEventSource.instances.length).toBe(before)
+  })
+
+  // The other half: an ordinary failure still reconnects. Without this the test
+  // above would pass just as well against a store that never reconnects at all.
+  it('still reconnects after an ordinary stream failure', () => {
+    const events = store()
+    events.connect()
+
+    const before = FakeEventSource.instances.length
+    latest().onerror?.(new Event('error'))
+    vi.advanceTimersByTime(5_000)
+
+    expect(FakeEventSource.instances.length).toBeGreaterThan(before)
+  })
 })

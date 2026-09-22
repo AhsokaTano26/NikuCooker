@@ -27,6 +27,9 @@ const connectionLabel: Record<ConnectionState, string> = {
   live: '已连接',
   reconnecting: '重连中',
   resyncing: '重新同步',
+  // Not a failure and not a retry: the user asked for this. Saying "重连中"
+  // here would make a server they deliberately stopped look like one that broke.
+  stopped: '已关闭',
 }
 
 const connectionTone: Record<ConnectionState, string> = {
@@ -35,6 +38,7 @@ const connectionTone: Record<ConnectionState, string> = {
   live: 'bg-status-done',
   reconnecting: 'bg-status-failed',
   resyncing: 'bg-status-running',
+  stopped: 'bg-status-pending',
 }
 
 onMounted(() => {

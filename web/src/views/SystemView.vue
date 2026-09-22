@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
-import { api } from '@/api/client'
+import { ApiError, api } from '@/api/client'
 import AppButton from '@/components/AppButton.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
 
 const events = useEventStore()
 const overview = useAsync(() => api.system.overview())
+
+const shutdownError = ref<string | null>(null)
 
 onMounted(overview.run)
 watch(() => events.resyncCount, overview.run)
@@ -17,6 +19,35 @@ const stats = computed(() => overview.data.value?.stats)
 
 function percent(value: number | null | undefined): string {
   return value === null || value === undefined ? '—' : `${value.toFixed(0)}%`
+}
+
+/**
+ * Stops the server.
+ *
+ * The confirmation says what actually happens, including the part that is not
+ * obvious. Under `docker compose` the process exiting is *not* the container
+ * staying down — the restart policy brings it straight back up — and a user who
+ * was not told that concludes the button is broken and stops trusting it.
+ */
+async function shutdown(): Promise<void> {
+  const confirmed = confirm(
+    '关闭 NikuCooker 服务？\n\n' +
+      '正在运行的作业会中断，这个页面会失去连接，需要重新启动进程才能继续使用。\n\n' +
+      '用 Docker 运行时，容器会在几秒后自动重启：点这个按钮等于重启一次服务。',
+  )
+  if (!confirmed) return
+
+  shutdownError.value = null
+
+  try {
+    await api.system.shutdown()
+    // Before the stream notices. The connection is about to fail because the
+    // server is stopping, and telling the store now is what keeps that from
+    // being reported as a dropped connection worth retrying.
+    events.markStopped()
+  } catch (cause) {
+    shutdownError.value = cause instanceof ApiError ? cause.message : String(cause)
+  }
 }
 </script>
 
@@ -129,6 +160,38 @@ function percent(value: number | null | undefined): string {
             <dd class="tabular-nums">{{ overview.data.value?.counts.needs_review ?? 0 }}</dd>
           </div>
         </dl>
+      </section>
+
+      <section class="rounded border border-line bg-surface-raised p-4">
+        <h2 class="text-sm font-medium text-ink-muted">关闭服务</h2>
+
+        <p
+          v-if="events.isShuttingDown"
+          class="mt-3 rounded border border-status-warn/40 bg-surface p-3 text-sm text-status-warn"
+        >
+          服务正在关闭。这个页面不会再更新，可以关掉它了；要重新使用，请重新启动进程。
+        </p>
+
+        <template v-else>
+          <p class="mt-3 text-sm text-ink-muted">
+            结束服务进程，等同于在终端按 Ctrl-C。正在运行的作业会中断 ——
+            但不会丢成果，下次运行会自动接着算。
+          </p>
+          <p class="mt-2 text-xs text-ink-faint">
+            用 Docker 运行时，<span class="font-mono">restart: unless-stopped</span>
+            会在几秒后把容器重新拉起来，点这个按钮等于重启服务而不是停掉它。
+            要真正停下来，请用 <span class="font-mono">docker compose stop</span>。
+          </p>
+
+          <p
+            v-if="shutdownError"
+            class="mt-3 rounded border border-status-failed/40 bg-surface p-3 text-sm text-status-failed"
+          >
+            {{ shutdownError }}
+          </p>
+
+          <AppButton class="mt-3" variant="danger" @click="shutdown">关闭服务</AppButton>
+        </template>
       </section>
     </template>
   </div>

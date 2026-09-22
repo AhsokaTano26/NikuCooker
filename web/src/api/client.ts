@@ -372,6 +372,16 @@ export const qc = {
 export const system = {
   overview: (signal?: AbortSignal): Promise<SystemOverview> => request('/system', { signal }),
   health: (signal?: AbortSignal): Promise<{ status: string }> => request('/system/health', { signal }),
+
+  /**
+   * Asks the server to stop.
+   *
+   * It answers before it goes, so a resolved promise means the request was
+   * accepted — not that the process has finished stopping. Nothing here waits
+   * for that: the connection this call is made over is one of the ones about to
+   * close.
+   */
+  shutdown: (): Promise<void> => request('/system/shutdown', { method: 'POST' }),
 }
 
 

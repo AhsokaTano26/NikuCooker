@@ -127,6 +127,16 @@ export const routes: RouteRecordRaw[] = [
     } satisfies NavMeta,
   },
   {
+    path: '/help',
+    name: 'help',
+    component: () => import('@/views/HelpView.vue'),
+    meta: {
+      label: '帮助',
+      description: '上手流程、术语与常见报错。',
+      nav: true,
+    } satisfies NavMeta,
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     redirect: '/',

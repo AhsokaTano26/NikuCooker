@@ -40,7 +40,18 @@ export interface EventSourceLike {
 
 export type EventSourceFactory = (url: string) => EventSourceLike
 
-export type ConnectionState = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'resyncing'
+/**
+ * `stopped` is terminal and is not a connection state at all: it records that
+ * the server was asked to shut down, so an error from the stream that is dying
+ * because of it is not mistaken for one to reconnect through.
+ */
+export type ConnectionState =
+  | 'idle'
+  | 'connecting'
+  | 'live'
+  | 'reconnecting'
+  | 'resyncing'
+  | 'stopped'
 
 export type EventListener = (event: ServerEvent) => void
 
@@ -86,6 +97,9 @@ export const useEventStore = defineStore('events', () => {
   const resyncCount = ref(0)
 
   const isLive = computed(() => connection.value === 'live')
+
+  /** True once the user has stopped the server from the interface. */
+  const isShuttingDown = computed(() => connection.value === 'stopped')
 
   const listeners = new Map<string, Set<EventListener>>()
 
@@ -204,6 +218,11 @@ export const useEventStore = defineStore('events', () => {
   }
 
   function scheduleReconnect(): void {
+    // The stream is about to fail *because* the server is stopping. Reconnecting
+    // would spend the backoff schedule retrying against a port that has nothing
+    // behind it, and the interface would report "重连中" for a server that was
+    // deliberately turned off.
+    if (connection.value === 'stopped') return
     if (reconnectTimer !== null) return
 
     if (connection.value !== 'resyncing') {
@@ -275,6 +294,20 @@ export const useEventStore = defineStore('events', () => {
     triggerResync(reason)
   }
 
+  /**
+   * Records that the server has been asked to stop, and stops expecting it.
+   *
+   * Called by whatever asked it to stop. Every other connection state describes
+   * a stream that is coming back; this one is the only state that says it is
+   * not, which is what keeps the interface from reporting a reconnection to a
+   * server that is gone.
+   */
+  function markStopped(): void {
+    disconnect()
+    connection.value = 'stopped'
+    dispatchLocal(LOCAL_CONNECTION)
+  }
+
   /** Test seam: forget everything, including the sequence position. */
   function reset(): void {
     disconnect()
@@ -290,9 +323,11 @@ export const useEventStore = defineStore('events', () => {
     lastError,
     resyncCount,
     isLive,
+    isShuttingDown,
     connect,
     disconnect,
     requestResync,
+    markStopped,
     on,
     useFactory,
     reset,
