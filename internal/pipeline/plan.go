@@ -116,6 +116,12 @@ type Options struct {
 	// Media is the FFmpeg service handed to stages.
 	Media *media.Service
 
+	// Worker runs inference requests.
+	Worker stage.WorkerPool
+
+	// Models resolves model names to on-disk directories.
+	Models stage.ModelLocator
+
 	// Force ignores the artifact cache and recomputes everything selected.
 	Force bool
 
@@ -234,6 +240,8 @@ func keyFor(
 		JobID:             opts.JobID,
 		SourcePath:        opts.SourcePath,
 		Media:             opts.Media,
+		Worker:            opts.Worker,
+		Models:            opts.Models,
 		Config:            opts.Config,
 		Inputs:            inputs,
 		Artifacts:         opts.Store,

@@ -21,6 +21,7 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
 	"github.com/AhsokaTano26/NikuCooker/internal/config"
 	"github.com/AhsokaTano26/NikuCooker/internal/media"
+	"github.com/AhsokaTano26/NikuCooker/pkg/protocol"
 )
 
 // Spec is a stage's identity and wiring.
@@ -102,6 +103,17 @@ type Env struct {
 	// and the only place arguments are constructed.
 	Media *media.Service
 
+	// Models resolves a model to its on-disk directory, so the worker loads
+	// the copy the core downloaded rather than fetching its own.
+	Models ModelLocator
+
+	// Worker runs requests against the Python AI worker.
+	//
+	// An interface rather than the concrete pool so that a stage can be tested
+	// without spawning a process, and so that stage has no dependency on the
+	// pool's internals.
+	Worker WorkerPool
+
 	// Config is the fully resolved configuration, including this project's
 	// overlay.
 	Config *config.Config
@@ -175,9 +187,40 @@ func (e *Env) ReportProgress(fraction float64, message string) {
 // part of the cache key.
 type Result = artifact.Result
 
+// ModelLocator resolves a model to its on-disk directory.
+type ModelLocator interface {
+	Resolve(kind string, name string) (string, bool)
+}
+
+// WorkerPool runs inference requests.
+type WorkerPool interface {
+	Call(
+		ctx context.Context,
+		method string,
+		params any,
+		onProgress func(protocol.ProgressEvent),
+	) ([]byte, error)
+}
+
 // ArtifactReader loads artifact payloads.
 type ArtifactReader interface {
+	// Decode reads an artifact's primary payload into v.
 	Decode(a *artifact.Artifact, v any) error
+	// Path resolves an artifact's primary payload to an absolute path, for
+	// stages that hand the file to an external process.
+	Path(a *artifact.Artifact) (string, error)
+}
+
+// InputPath resolves the primary payload of a named upstream stage.
+func (e *Env) InputPath(producer string) (string, error) {
+	a, ok := e.Inputs[producer]
+	if !ok || a == nil {
+		return "", fmt.Errorf("stage: no artifact from %q", producer)
+	}
+	if e.Artifacts == nil {
+		return "", errors.New("stage: no artifact reader is available")
+	}
+	return e.Artifacts.Path(a)
 }
 
 // ReadInput decodes the primary payload of the artifact produced by a named

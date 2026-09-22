@@ -144,6 +144,8 @@ func runStage(
 		JobID:             opts.JobID,
 		SourcePath:        opts.SourcePath,
 		Media:             opts.Media,
+		Worker:            opts.Worker,
+		Models:            opts.Models,
 		Config:            opts.Config,
 		Inputs:            inputs,
 		Artifacts:         opts.Store,

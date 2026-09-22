@@ -120,6 +120,23 @@ func (s *Store) Latest(ctx context.Context, stage string) (*Artifact, error) {
 	return s.Lookup(ctx, key)
 }
 
+// Path returns the absolute path of an artifact's primary payload.
+//
+// The counterpart to Decode, for stages that hand the file to an external
+// process rather than reading it: FFmpeg wants a path, not a decoded struct.
+func (s *Store) Path(a *Artifact) (string, error) {
+	if a == nil {
+		return "", errors.New("artifact: cannot resolve the path of a nil artifact")
+	}
+
+	dir := s.absDir(a.Path)
+	primary, err := PrimaryOf(dir)
+	if err != nil {
+		return "", fmt.Errorf("artifact: read manifest of %s: %w", a.ID, err)
+	}
+	return filepath.Join(dir, primary), nil
+}
+
 // Decode reads an artifact's primary payload into v.
 //
 // It exists so a stage can consume an upstream artifact without knowing how
