@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { ApiError, api } from '@/api/client'
+import AppButton from '@/components/AppButton.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
 import { useEventStore, type ServerEvent } from '@/stores/events'
 import type { ModelRecord, ModelStatus } from '@/api/client'
@@ -110,9 +111,9 @@ const STATUS_TONE: Record<ModelStatus, string> = {
       <p class="text-sm text-ink-muted">
         已安装模型占用 <span class="tabular-nums text-ink">{{ formatBytes(usedBytes) }}</span>
       </p>
-      <button class="text-sm text-ink-faint transition hover:text-accent" @click="models.run">
+      <AppButton variant="ghost" size="sm" @click="models.run">
         刷新
-      </button>
+      </AppButton>
     </div>
 
     <p v-if="actionError" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
@@ -121,7 +122,7 @@ const STATUS_TONE: Record<ModelStatus, string> = {
 
     <p v-if="models.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
       {{ models.error.value }}
-      <button class="ml-2 text-accent hover:underline" @click="models.run">重试</button>
+      <AppButton variant="ghost" size="sm" class="ml-2" @click="models.run">重试</AppButton>
     </p>
 
     <div v-else-if="models.loading.value && !models.data.value" class="p-6 text-center text-sm text-ink-muted">
@@ -170,22 +171,24 @@ const STATUS_TONE: Record<ModelStatus, string> = {
           </div>
 
           <div class="flex shrink-0 gap-3 text-xs">
-            <button
+            <AppButton
               v-if="model.status !== 'ready' && progress[model.name] === undefined"
+              variant="ghost"
+              size="sm"
               :disabled="busy === model.id"
-              class="text-accent transition hover:underline disabled:opacity-40"
               @click="download(model)"
             >
               下载
-            </button>
-            <button
+            </AppButton>
+            <AppButton
               v-else-if="model.status === 'ready'"
+              variant="danger"
+              size="sm"
               :disabled="busy === model.id"
-              class="text-ink-faint transition hover:text-status-failed disabled:opacity-40"
               @click="remove(model)"
             >
               删除
-            </button>
+            </AppButton>
           </div>
         </div>
       </li>

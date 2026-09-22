@@ -42,6 +42,12 @@ const browserGlobals = {
   XMLHttpRequest: 'readonly',
   DragEvent: 'readonly',
   Event: 'readonly',
+  // The dropdown's keyboard and pointer handling. It is the one control built
+  // by hand rather than wrapped, so it is the one that names these.
+  HTMLButtonElement: 'readonly',
+  KeyboardEvent: 'readonly',
+  PointerEvent: 'readonly',
+  Node: 'readonly',
   // `location` is declared above; `globalThis` is how the client reaches it
   // when there is no page — a test, or a server-side render.
   globalThis: 'readonly',

@@ -3,6 +3,10 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { ApiError, api, type Upload, type UploadHandle } from '@/api/client'
+import AppButton from '@/components/AppButton.vue'
+import AppInput from '@/components/AppInput.vue'
+import AppRadio from '@/components/AppRadio.vue'
+import AppSelect from '@/components/AppSelect.vue'
 import { useAsync, formatBytes } from '@/composables/useAsync'
 import type { TranslationStyle } from '@/types/api'
 
@@ -216,6 +220,12 @@ const LANGUAGES = [
  * incomplete here costs a click rather than a capability.
  */
 const ACCEPT = 'video/*,audio/*,.mkv,.ts,.m2ts,.flv,.wmv'
+
+/** The two ways media arrives, for the toggle above the source field. */
+const SOURCE_MODES = [
+  { value: 'upload' as const, label: '上传文件' },
+  { value: 'path' as const, label: '服务端路径' },
+]
 </script>
 
 <template>
@@ -231,22 +241,16 @@ const ACCEPT = 'video/*,audio/*,.mkv,.ts,.m2ts,.flv,.wmv'
         <!-- Only offered when the server permits it. Showing a choice that
              leads to a refusal is worse than not showing it. -->
         <div v-if="pathSourceAllowed" class="flex gap-1 text-xs">
-          <button
-            type="button"
-            class="rounded px-2 py-0.5 transition"
-            :class="mode === 'upload' ? 'bg-surface-raised text-ink' : 'text-ink-faint hover:text-ink-muted'"
-            @click="mode = 'upload'"
+          <AppButton
+            v-for="option in SOURCE_MODES"
+            :key="option.value"
+            variant="ghost"
+            size="sm"
+            :class="mode === option.value ? 'bg-surface-raised text-ink' : ''"
+            @click="mode = option.value"
           >
-            上传文件
-          </button>
-          <button
-            type="button"
-            class="rounded px-2 py-0.5 transition"
-            :class="mode === 'path' ? 'bg-surface-raised text-ink' : 'text-ink-faint hover:text-ink-muted'"
-            @click="mode = 'path'"
-          >
-            服务端路径
-          </button>
+            {{ option.label }}
+          </AppButton>
         </div>
       </div>
 
@@ -278,13 +282,7 @@ const ACCEPT = 'video/*,audio/*,.mkv,.ts,.m2ts,.flv,.wmv'
         <div v-else-if="uploading" class="space-y-2 rounded border border-line p-4">
           <div class="flex items-center justify-between gap-3 text-sm">
             <span class="truncate">{{ file?.name }}</span>
-            <button
-              type="button"
-              class="shrink-0 text-xs text-ink-faint transition hover:text-ink"
-              @click="cancelUpload"
-            >
-              取消
-            </button>
+            <AppButton variant="ghost" size="sm" class="shrink-0" @click="cancelUpload">取消</AppButton>
           </div>
           <div class="h-1.5 overflow-hidden rounded-full bg-surface-sunken">
             <div
@@ -302,24 +300,17 @@ const ACCEPT = 'video/*,audio/*,.mkv,.ts,.m2ts,.flv,.wmv'
             <p class="truncate text-sm">{{ uploaded?.name }}</p>
             <p class="text-xs text-ink-faint">已上传 · {{ formatBytes(uploaded?.size_bytes) }}</p>
           </div>
-          <button
-            type="button"
-            class="shrink-0 rounded border border-line px-2 py-1 text-xs text-ink-muted transition hover:border-ink-faint hover:text-ink"
-            @click="fileInput?.click()"
-          >
-            换一个
-          </button>
+          <AppButton size="sm" class="shrink-0" @click="fileInput?.click()">换一个</AppButton>
         </div>
       </div>
 
       <!-- Server-side path -->
       <div v-else class="mt-2">
-        <input
+        <AppInput
           id="source"
           v-model="sourcePath"
-          type="text"
+          mono
           placeholder="/path/to/episode01.mkv"
-          class="w-full rounded border border-line bg-surface-raised px-3 py-2 font-mono text-sm outline-none placeholder:text-ink-faint focus:border-accent"
         />
         <p class="mt-1 text-xs text-ink-faint">
           这个路径由服务端读取。文件会被复制进项目目录，之后移动或删除原文件都不影响项目。
@@ -339,58 +330,38 @@ const ACCEPT = 'video/*,audio/*,.mkv,.ts,.m2ts,.flv,.wmv'
 
     <div>
       <label for="name" class="block text-sm text-ink-muted">项目名称</label>
-      <input
-        id="name"
-        v-model="name"
-        type="text"
-        placeholder="第12回 声優ラジオ"
-        class="mt-1 w-full rounded border border-line bg-surface-raised px-3 py-2 text-sm outline-none placeholder:text-ink-faint focus:border-accent"
-      />
+      <div class="mt-1">
+        <AppInput id="name" v-model="name" placeholder="第12回 声優ラジオ" />
+      </div>
     </div>
 
     <div class="grid gap-4 sm:grid-cols-2">
       <div>
         <label for="source-language" class="block text-sm text-ink-muted">原语言</label>
-        <select
-          id="source-language"
-          v-model="sourceLanguage"
-          class="mt-1 w-full rounded border border-line bg-surface-raised px-3 py-2 text-sm outline-none focus:border-accent"
-        >
-          <option v-for="language in LANGUAGES" :key="language.value" :value="language.value">
-            {{ language.label }}
-          </option>
-        </select>
+        <div class="mt-1">
+          <AppSelect id="source-language" v-model="sourceLanguage" :options="LANGUAGES" />
+        </div>
       </div>
 
       <div>
         <label for="target-language" class="block text-sm text-ink-muted">目标语言</label>
-        <select
-          id="target-language"
-          v-model="targetLanguage"
-          class="mt-1 w-full rounded border border-line bg-surface-raised px-3 py-2 text-sm outline-none focus:border-accent"
-        >
-          <option v-for="language in LANGUAGES" :key="language.value" :value="language.value">
-            {{ language.label }}
-          </option>
-        </select>
+        <div class="mt-1">
+          <AppSelect id="target-language" v-model="targetLanguage" :options="LANGUAGES" />
+        </div>
       </div>
     </div>
 
     <fieldset>
       <legend class="text-sm text-ink-muted">翻译风格</legend>
       <div class="mt-2 space-y-2">
-        <label
+        <AppRadio
           v-for="option in STYLES"
           :key="option.value"
-          class="flex cursor-pointer gap-3 rounded border p-3 transition"
-          :class="style === option.value ? 'border-accent bg-surface-raised' : 'border-line hover:border-ink-faint'"
-        >
-          <input v-model="style" type="radio" :value="option.value" class="mt-1" />
-          <span>
-            <span class="block text-sm">{{ option.label }}</span>
-            <span class="mt-0.5 block text-xs text-ink-faint">{{ option.hint }}</span>
-          </span>
-        </label>
+          v-model="style"
+          :value="option.value"
+          :label="option.label"
+          :hint="option.hint"
+        />
       </div>
     </fieldset>
 
@@ -406,12 +377,8 @@ const ACCEPT = 'video/*,audio/*,.mkv,.ts,.m2ts,.flv,.wmv'
       {{ error }}
     </p>
 
-    <button
-      type="submit"
-      :disabled="!canSubmit"
-      class="rounded bg-accent px-4 py-2 text-sm font-medium text-accent-ink transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-    >
+    <AppButton type="submit" variant="primary" :disabled="!canSubmit">
       {{ submitting ? '创建中…' : '创建项目' }}
-    </button>
+    </AppButton>
   </form>
 </template>

@@ -2,6 +2,7 @@
 import { computed, onMounted, watch } from 'vue'
 
 import { api } from '@/api/client'
+import AppButton from '@/components/AppButton.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
 
@@ -23,7 +24,7 @@ function percent(value: number | null | undefined): string {
   <div class="space-y-6">
     <p v-if="overview.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-4 text-sm text-status-failed">
       {{ overview.error.value }}
-      <button class="ml-2 text-accent hover:underline" @click="overview.run">重试</button>
+      <AppButton variant="ghost" size="sm" class="ml-2" @click="overview.run">重试</AppButton>
     </p>
 
     <template v-else>

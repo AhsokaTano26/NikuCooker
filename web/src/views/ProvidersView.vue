@@ -2,6 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 import { ApiError, api, type Provider, type ProviderInput } from '@/api/client'
+import AppButton from '@/components/AppButton.vue'
+import AppCheckbox from '@/components/AppCheckbox.vue'
+import AppField from '@/components/AppField.vue'
+import AppInput from '@/components/AppInput.vue'
 import { useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
 
@@ -162,7 +166,7 @@ const canSubmit = computed(() => form.name.trim() !== '' && form.base_url.trim()
 
       <p v-if="providers.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
         {{ providers.error.value }}
-        <button class="ml-2 text-accent hover:underline" @click="providers.run">重试</button>
+        <AppButton variant="ghost" size="sm" class="ml-2" @click="providers.run">重试</AppButton>
       </p>
 
       <div v-else-if="items.length === 0" class="rounded border border-dashed border-line p-10 text-center text-sm text-ink-muted">
@@ -192,18 +196,19 @@ const canSubmit = computed(() => form.name.trim() !== '' && form.base_url.trim()
               </p>
 
               <div class="mt-1.5 flex flex-wrap gap-3 text-xs">
-                <button class="text-ink-faint hover:text-accent" @click="edit(provider)">编辑</button>
-                <button class="text-ink-faint hover:text-accent" @click="toggle(provider)">
+                <AppButton variant="ghost" size="sm" @click="edit(provider)">编辑</AppButton>
+                <AppButton variant="ghost" size="sm" @click="toggle(provider)">
                   {{ provider.enabled ? '停用' : '启用' }}
-                </button>
-                <button
+                </AppButton>
+                <AppButton
+                  variant="ghost"
+                  size="sm"
                   :disabled="busy === provider.id"
-                  class="text-ink-faint hover:text-accent disabled:opacity-40"
                   @click="test(provider)"
                 >
                   {{ busy === provider.id ? '测试中…' : '测试' }}
-                </button>
-                <button class="text-ink-faint hover:text-status-failed" @click="remove(provider)">删除</button>
+                </AppButton>
+                <AppButton variant="danger" size="sm" @click="remove(provider)">删除</AppButton>
               </div>
             </div>
           </div>
@@ -217,77 +222,49 @@ const canSubmit = computed(() => form.name.trim() !== '' && form.base_url.trim()
       </h2>
 
       <form class="mt-3 space-y-3" @submit.prevent="submit">
-        <div>
-          <label for="p-name" class="block text-xs text-ink-muted">名称</label>
-          <input
-            id="p-name"
-            v-model="form.name"
-            type="text"
-            placeholder="openai"
-            class="mt-1 w-full rounded border border-line bg-surface px-2 py-1.5 text-sm outline-none focus:border-accent"
-          />
-        </div>
+        <AppField label="名称" for-id="p-name">
+          <AppInput id="p-name" v-model="form.name" placeholder="openai" />
+        </AppField>
 
-        <div>
-          <label for="p-url" class="block text-xs text-ink-muted">接口地址</label>
-          <input
+        <AppField
+          label="接口地址"
+          for-id="p-url"
+          help="不带 /chat/completions 也可以，会自动补全。"
+        >
+          <AppInput
             id="p-url"
             v-model="form.base_url"
-            type="text"
+            mono
             placeholder="https://api.example.com/v1"
-            class="mt-1 w-full rounded border border-line bg-surface px-2 py-1.5 font-mono text-xs outline-none focus:border-accent"
           />
-          <p class="mt-1 text-xs text-ink-faint">
-            不带 <code class="font-mono">/chat/completions</code> 也可以，会自动补全。
-          </p>
-        </div>
+        </AppField>
 
-        <div>
-          <label for="p-model" class="block text-xs text-ink-muted">模型</label>
-          <input
-            id="p-model"
-            v-model="form.model"
-            type="text"
-            placeholder="gpt-4o-mini"
-            class="mt-1 w-full rounded border border-line bg-surface px-2 py-1.5 font-mono text-xs outline-none focus:border-accent"
-          />
-        </div>
+        <AppField label="模型" for-id="p-model">
+          <AppInput id="p-model" v-model="form.model" mono placeholder="gpt-4o-mini" />
+        </AppField>
 
-        <div>
-          <label for="p-key" class="block text-xs text-ink-muted">API 密钥</label>
-          <input
+        <AppField label="API 密钥" for-id="p-key">
+          <AppInput
             id="p-key"
             v-model="form.api_key"
             type="password"
+            mono
             :disabled="isEditing && !replacingKey"
             :placeholder="isEditing ? '留空则保持原密钥' : 'sk-...'"
-            class="mt-1 w-full rounded border border-line bg-surface px-2 py-1.5 font-mono text-xs outline-none focus:border-accent disabled:opacity-50"
           />
           <!-- The key never leaves the server, so it cannot be shown back. The
                checkbox is what makes "replace it" an explicit act rather than
                something that happens by typing in a field. -->
-          <label v-if="isEditing" class="mt-1 flex items-center gap-2 text-xs text-ink-faint">
-            <input v-model="replacingKey" type="checkbox" />
-            更换密钥
-          </label>
-        </div>
+          <div v-if="isEditing" class="mt-1.5">
+            <AppCheckbox v-model="replacingKey" label="更换密钥" />
+          </div>
+        </AppField>
 
         <div class="flex gap-2 pt-1">
-          <button
-            type="submit"
-            :disabled="!canSubmit"
-            class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition hover:opacity-90 disabled:opacity-40"
-          >
+          <AppButton type="submit" variant="primary" :disabled="!canSubmit">
             {{ isEditing ? '保存' : '添加' }}
-          </button>
-          <button
-            v-if="isEditing"
-            type="button"
-            class="rounded border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:text-ink"
-            @click="reset"
-          >
-            取消
-          </button>
+          </AppButton>
+          <AppButton v-if="isEditing" @click="reset">取消</AppButton>
         </div>
       </form>
     </section>

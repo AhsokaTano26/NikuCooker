@@ -2,6 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { ApiError, api, type SettingDescriptor } from '@/api/client'
+import AppBadge from '@/components/AppBadge.vue'
+import AppButton from '@/components/AppButton.vue'
+import AppCheckbox from '@/components/AppCheckbox.vue'
+import AppInput from '@/components/AppInput.vue'
+import AppSelect from '@/components/AppSelect.vue'
 import { useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
 
@@ -268,7 +273,7 @@ watch(settings.data, (value) => {
       class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed"
     >
       {{ settings.error.value }}
-      <button class="ml-2 text-accent hover:underline" @click="settings.run">重试</button>
+      <AppButton variant="ghost" size="sm" class="ml-2" @click="settings.run">重试</AppButton>
     </p>
 
     <p v-else-if="settings.loading.value && !settings.data.value" class="p-6 text-center text-sm text-ink-muted">
@@ -290,24 +295,17 @@ watch(settings.data, (value) => {
            form because the save control is what everything above it is for,
            and on a long page it would otherwise be a scroll away. -->
       <div class="flex flex-wrap items-center gap-3">
-        <input
-          v-model="filter"
-          type="search"
-          placeholder="筛选，例如 模型 或 asr"
-          class="min-w-56 flex-1 rounded border border-line bg-surface-raised px-3 py-1.5 text-sm outline-none placeholder:text-ink-faint focus:border-accent"
-        />
-        <label class="flex cursor-pointer items-center gap-2 text-xs text-ink-muted">
-          <input v-model="showAdvanced" type="checkbox" />
-          高级（{{ advancedCount }}）
-        </label>
-        <button
-          type="button"
+        <div class="min-w-56 flex-1">
+          <AppInput v-model="filter" type="search" placeholder="筛选，例如 模型 或 asr" />
+        </div>
+        <AppCheckbox v-model="showAdvanced" :label="`高级（${advancedCount}）`" />
+        <AppButton
+          variant="primary"
           :disabled="changedKeys.length === 0 || saving"
-          class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           @click="save"
         >
           {{ saving ? '保存中…' : changedKeys.length === 0 ? '没有改动' : `保存 ${changedKeys.length} 项` }}
-        </button>
+        </AppButton>
       </div>
 
       <section
@@ -327,21 +325,13 @@ watch(settings.data, (value) => {
 
                 <!-- Where a value came from matters most when it is somewhere
                      the user has forgotten about. -->
-                <span
-                  v-if="setting.source !== 'default'"
-                  class="rounded bg-surface-sunken px-1.5 py-0.5 text-xs text-ink-faint"
-                >
+                <AppBadge v-if="setting.source !== 'default'">
                   {{ SOURCE_LABEL[setting.source] ?? setting.source }}
-                </span>
-                <span v-if="isChanged(setting)" class="text-xs text-status-warn">已改动</span>
-                <button
-                  v-if="setting.overridden"
-                  type="button"
-                  class="text-xs text-ink-faint transition hover:text-accent"
-                  @click="reset(setting)"
-                >
+                </AppBadge>
+                <AppBadge v-if="isChanged(setting)" tone="warn">已改动</AppBadge>
+                <AppButton v-if="setting.overridden" variant="ghost" size="sm" @click="reset(setting)">
                   恢复默认
-                </button>
+                </AppButton>
               </div>
 
               <p class="mt-1 text-xs text-ink-faint">{{ setting.help }}</p>
@@ -349,69 +339,52 @@ watch(settings.data, (value) => {
             </div>
 
             <div class="w-72 shrink-0">
-              <!-- A checkbox. -->
-              <label v-if="setting.kind === 'bool'" class="flex items-center gap-2 pt-1 text-sm">
-                <input :id="setting.key" v-model="draft[setting.key]" type="checkbox" />
-                <span class="text-xs text-ink-muted">
-                  {{ draft[setting.key] ? '开启' : '关闭' }}
-                </span>
-              </label>
+              <!-- On or off. -->
+              <AppCheckbox
+                v-if="setting.kind === 'bool'"
+                v-model="draft[setting.key] as boolean"
+                :label="draft[setting.key] ? '开启' : '关闭'"
+              />
 
               <!-- A fixed set of choices. -->
-              <select
+              <AppSelect
                 v-else-if="setting.kind === 'enum'"
                 :id="setting.key"
-                v-model="draft[setting.key]"
-                class="w-full rounded border border-line bg-surface px-2 py-1.5 text-sm outline-none focus:border-accent"
-              >
-                <option v-for="option in setting.options ?? []" :key="option.value" :value="option.value">
-                  {{ option.label }}
-                </option>
-              </select>
+                v-model="draft[setting.key] as string"
+                :options="setting.options ?? []"
+              />
 
               <!-- A list with fixed members is a set of checkboxes: it is the
                    only control that says what the valid values are. -->
-              <div v-else-if="setting.kind === 'list' && (setting.options?.length ?? 0) > 0" class="space-y-1">
-                <label
+              <div v-else-if="setting.kind === 'list' && (setting.options?.length ?? 0) > 0" class="space-y-1.5">
+                <AppCheckbox
                   v-for="option in setting.options ?? []"
                   :key="option.value"
-                  class="flex items-start gap-2 text-xs text-ink-muted"
-                >
-                  <input
-                    type="checkbox"
-                    class="mt-0.5"
-                    :checked="listHas(setting, option.value)"
-                    @change="toggleList(setting, option.value)"
-                  />
-                  <span>{{ option.label }}</span>
-                </label>
+                  :model-value="listHas(setting, option.value)"
+                  :label="option.label"
+                  @update:model-value="toggleList(setting, option.value)"
+                />
               </div>
 
-              <!-- A number. -->
+              <!-- A number, with its unit beside it. -->
               <div
                 v-else-if="setting.kind === 'int' || setting.kind === 'float' || setting.kind === 'bytes'"
                 class="flex items-center gap-2"
               >
-                <input
+                <AppInput
                   :id="setting.key"
-                  v-model="draft[setting.key]"
+                  v-model="draft[setting.key] as string"
                   type="number"
+                  class="tabular-nums"
                   :min="setting.min || undefined"
                   :max="setting.max || undefined"
                   :step="setting.step || (setting.kind === 'int' ? 1 : 'any')"
-                  class="w-full rounded border border-line bg-surface px-2 py-1.5 text-sm tabular-nums outline-none focus:border-accent"
                 />
                 <span v-if="setting.unit" class="shrink-0 text-xs text-ink-faint">{{ setting.unit }}</span>
               </div>
 
               <!-- Everything else, including a list with no fixed members. -->
-              <input
-                v-else
-                :id="setting.key"
-                v-model="draft[setting.key]"
-                type="text"
-                class="w-full rounded border border-line bg-surface px-2 py-1.5 text-sm outline-none focus:border-accent"
-              />
+              <AppInput v-else :id="setting.key" v-model="draft[setting.key] as string" />
             </div>
           </li>
         </ul>
@@ -445,12 +418,14 @@ watch(settings.data, (value) => {
           </p>
 
           <div class="flex flex-wrap items-center gap-3">
-            <input
-              v-model="tableFilter"
-              type="search"
-              placeholder="筛选，例如 asr 或 translation.model"
-              class="min-w-64 flex-1 rounded border border-line bg-surface px-3 py-1.5 font-mono text-sm outline-none placeholder:text-ink-faint focus:border-accent"
-            />
+            <div class="min-w-64 flex-1">
+              <AppInput
+                v-model="tableFilter"
+                type="search"
+                mono
+                placeholder="筛选，例如 asr 或 translation.model"
+              />
+            </div>
             <span class="text-xs text-ink-faint">{{ rows.length }} 项</span>
           </div>
 

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { ApiError, api, API_BASE } from '@/api/client'
+import AppButton from '@/components/AppButton.vue'
 import { formatDuration, useAsync } from '@/composables/useAsync'
 import { useEventStore, type ServerEvent } from '@/stores/events'
 import type { Segment } from '@/types/api'
@@ -169,30 +170,19 @@ function cpsTone(line: Segment): string {
 <template>
   <div class="space-y-4">
     <div class="flex flex-wrap items-center gap-3">
-      <label class="flex items-center gap-2 text-sm text-ink-muted">
-        <input v-model="onlyReview" type="checkbox" />
-        只看待审校
-        <span v-if="reviewCount > 0" class="text-status-running">({{ reviewCount }})</span>
-      </label>
+      <AppCheckbox v-model="onlyReview" :label="`只看待审校${reviewCount > 0 ? ` (${reviewCount})` : ''}`" />
 
-      <input
-        v-model="search"
-        type="search"
-        placeholder="搜索原文或译文"
-        class="min-w-48 flex-1 rounded border border-line bg-surface-raised px-3 py-1.5 text-sm outline-none placeholder:text-ink-faint focus:border-accent"
-      />
+      <div class="min-w-48 flex-1">
+        <AppInput v-model="search" type="search" placeholder="搜索原文或译文" />
+      </div>
 
       <a
-        :href="`${API_BASE}/projects/${projectId}/subtitles.srt`"
-        class="rounded border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent hover:text-ink"
+        v-for="format in ['srt', 'ass']"
+        :key="format"
+        :href="`${API_BASE}/projects/${projectId}/subtitles.${format}`"
+        class="rounded border border-line px-3 py-1.5 text-sm text-ink-muted transition outline-none hover:border-accent hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
-        导出 SRT
-      </a>
-      <a
-        :href="`${API_BASE}/projects/${projectId}/subtitles.ass`"
-        class="rounded border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent hover:text-ink"
-      >
-        导出 ASS
+        导出 {{ format.toUpperCase() }}
       </a>
     </div>
 
@@ -202,7 +192,7 @@ function cpsTone(line: Segment): string {
 
     <p v-if="lines.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
       {{ lines.error.value }}
-      <button class="ml-2 text-accent hover:underline" @click="lines.run">重试</button>
+      <AppButton variant="ghost" size="sm" class="ml-2" @click="lines.run">重试</AppButton>
     </p>
 
     <div v-else-if="lines.loading.value && !lines.data.value" class="p-6 text-center text-sm text-ink-muted">
@@ -234,12 +224,11 @@ function cpsTone(line: Segment): string {
           <div class="min-w-0 flex-1">
             <p class="text-sm text-ink-muted">{{ line.source_text }}</p>
 
-            <textarea
+            <AppTextarea
               v-if="editingId === line.id"
               :id="`editor-${line.id}`"
               v-model="draft"
-              rows="2"
-              class="mt-1 w-full rounded border border-accent bg-surface-sunken px-2 py-1 text-sm outline-none"
+              :rows="2"
               @keydown.enter.exact.prevent="commit"
               @keydown.esc.prevent="cancel"
             />
@@ -268,17 +257,17 @@ function cpsTone(line: Segment): string {
 
             <div class="mt-1.5 flex flex-wrap items-center gap-3 text-xs">
               <template v-if="editingId === line.id">
-                <button class="text-accent hover:underline" :disabled="saving" @click="commit">
+                <AppButton variant="ghost" size="sm" :disabled="saving" @click="commit">
                   {{ saving ? '保存中…' : '保存' }}
-                </button>
-                <button class="text-ink-faint hover:text-ink" @click="cancel">取消</button>
+                </AppButton>
+                <AppButton variant="ghost" size="sm" @click="cancel">取消</AppButton>
               </template>
               <template v-else>
-                <button class="text-ink-faint hover:text-accent" @click="translate(line)">重译</button>
-                <button class="text-ink-faint hover:text-accent" @click="split(line)">拆分</button>
-                <button class="text-ink-faint hover:text-accent" @click="merge(line)">合并下一行</button>
-                <button class="text-ink-faint hover:text-status-done" @click="decide(line, 'approved')">通过</button>
-                <button class="text-ink-faint hover:text-status-failed" @click="decide(line, 'rejected')">打回</button>
+                <AppButton variant="ghost" size="sm" @click="translate(line)">重译</AppButton>
+                <AppButton variant="ghost" size="sm" @click="split(line)">拆分</AppButton>
+                <AppButton variant="ghost" size="sm" @click="merge(line)">合并下一行</AppButton>
+                <AppButton variant="ghost" size="sm" @click="decide(line, 'approved')">通过</AppButton>
+                <AppButton variant="danger" size="sm" @click="decide(line, 'rejected')">打回</AppButton>
 
                 <span v-if="line.is_edited" class="text-ink-faint">已手工修改</span>
                 <span v-else-if="line.review_state !== 'none'" class="text-ink-faint">

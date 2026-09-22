@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { ApiError, api, type ProjectOutput } from '@/api/client'
+import AppButton from '@/components/AppButton.vue'
 import { formatBytes, formatDuration, formatTime, useAsync } from '@/composables/useAsync'
 import { useEventStore, type ServerEvent } from '@/stores/events'
 import type { PipelineView, StageStatus, StageView } from '@/types/api'
@@ -211,7 +212,7 @@ const STATUS_LABEL: Record<StageStatus, string> = {
   <div class="space-y-6">
     <div v-if="project.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-4 text-sm">
       <p class="text-status-failed">{{ project.error.value }}</p>
-      <button class="mt-2 text-accent hover:underline" @click="project.run">重试</button>
+      <AppButton variant="ghost" size="sm" class="mt-2" @click="project.run">重试</AppButton>
     </div>
 
     <template v-else>
@@ -230,22 +231,10 @@ const STATUS_LABEL: Record<StageStatus, string> = {
         </div>
 
         <div class="flex gap-2">
-          <button
-            v-if="!running"
-            :disabled="acting"
-            class="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink transition hover:opacity-90 disabled:opacity-40"
-            @click="start"
-          >
+          <AppButton v-if="!running" variant="primary" :disabled="acting" @click="start">
             运行
-          </button>
-          <button
-            v-else
-            :disabled="acting"
-            class="rounded border border-status-failed px-3 py-1.5 text-sm text-status-failed transition hover:bg-status-failed/10 disabled:opacity-40"
-            @click="cancel"
-          >
-            取消
-          </button>
+          </AppButton>
+          <AppButton v-else variant="danger" :disabled="acting" @click="cancel">取消</AppButton>
         </div>
       </header>
 

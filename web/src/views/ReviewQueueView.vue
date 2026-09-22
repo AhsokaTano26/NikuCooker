@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { ApiError, api } from '@/api/client'
+import AppSegmented from '@/components/AppSegmented.vue'
+import AppButton from '@/components/AppButton.vue'
 import { formatDuration, useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
 import type { QCFinding, QCSeverity, Segment } from '@/types/api'
@@ -83,6 +85,14 @@ const SEVERITY_TONE: Record<QCSeverity, string> = {
   info: 'text-ink-faint',
 }
 
+/** The filters, in the order the queue is worst-first. */
+const SEVERITY_FILTERS: { value: QCSeverity | 'all'; label: string }[] = [
+  { value: 'all', label: '全部' },
+  { value: 'error', label: '错误' },
+  { value: 'warning', label: '警告' },
+  { value: 'info', label: '提示' },
+]
+
 const SEVERITY_LABEL: Record<QCSeverity, string> = {
   error: '错误',
   warning: '警告',
@@ -93,17 +103,7 @@ const SEVERITY_LABEL: Record<QCSeverity, string> = {
 <template>
   <div class="space-y-4">
     <div class="flex flex-wrap items-center gap-3">
-      <div class="flex rounded border border-line bg-surface-raised">
-        <button
-          v-for="option in (['all', 'error', 'warning', 'info'] as const)"
-          :key="option"
-          class="px-3 py-1.5 text-sm transition"
-          :class="severity === option ? 'bg-accent text-accent-ink' : 'text-ink-muted hover:text-ink'"
-          @click="severity = option"
-        >
-          {{ option === 'all' ? '全部' : SEVERITY_LABEL[option] }}
-        </button>
-      </div>
+      <AppSegmented v-model="severity" :options="SEVERITY_FILTERS" />
 
       <p class="text-sm text-ink-muted">
         <span class="text-status-failed">{{ summary.error }}</span> 错误 ·
@@ -125,7 +125,7 @@ const SEVERITY_LABEL: Record<QCSeverity, string> = {
 
     <p v-if="findings.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
       {{ findings.error.value }}
-      <button class="ml-2 text-accent hover:underline" @click="findings.run">重试</button>
+      <AppButton variant="ghost" size="sm" class="ml-2" @click="findings.run">重试</AppButton>
     </p>
 
     <div v-else-if="findings.loading.value && !findings.data.value" class="p-6 text-center text-sm text-ink-muted">
@@ -181,9 +181,9 @@ const SEVERITY_LABEL: Record<QCSeverity, string> = {
               >
                 去修改
               </RouterLink>
-              <button class="text-ink-faint hover:text-status-done" @click="resolve(finding, true)">
+              <AppButton variant="ghost" size="sm" @click="resolve(finding, true)">
                 标记已处理
-              </button>
+              </AppButton>
             </div>
           </div>
         </div>

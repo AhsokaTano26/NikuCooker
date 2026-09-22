@@ -3,11 +3,21 @@ import { onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { api, type ListProjectsQuery } from '@/api/client'
+import AppSegmented from '@/components/AppSegmented.vue'
+import AppButton from '@/components/AppButton.vue'
+import AppInput from '@/components/AppInput.vue'
 import { formatDuration, useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
 import type { Project } from '@/types/api'
 
 const events = useEventStore()
+
+/** The three views of the project list, in the order they are read. */
+const STATUS_FILTERS = [
+  { value: 'active', label: '进行中' },
+  { value: 'archived', label: '已归档' },
+  { value: 'all', label: '全部' },
+]
 
 const filter = ref<'active' | 'archived' | 'all'>('active')
 const search = ref('')
@@ -61,24 +71,11 @@ async function remove(project: Project): Promise<void> {
 <template>
   <div class="space-y-4">
     <div class="flex flex-wrap items-center gap-3">
-      <div class="flex rounded border border-line bg-surface-raised">
-        <button
-          v-for="option in (['active', 'archived', 'all'] as const)"
-          :key="option"
-          class="px-3 py-1.5 text-sm transition"
-          :class="filter === option ? 'bg-accent text-accent-ink' : 'text-ink-muted hover:text-ink'"
-          @click="filter = option"
-        >
-          {{ { active: '进行中', archived: '已归档', all: '全部' }[option] }}
-        </button>
-      </div>
+      <AppSegmented v-model="filter" :options="STATUS_FILTERS" />
 
-      <input
-        v-model="search"
-        type="search"
-        placeholder="搜索项目名"
-        class="min-w-48 flex-1 rounded border border-line bg-surface-raised px-3 py-1.5 text-sm outline-none placeholder:text-ink-faint focus:border-accent"
-      />
+      <div class="min-w-56 flex-1">
+        <AppInput v-model="search" type="search" placeholder="搜索项目名" />
+      </div>
 
       <RouterLink
         to="/projects/new"
@@ -94,7 +91,7 @@ async function remove(project: Project): Promise<void> {
 
     <p v-if="projects.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
       {{ projects.error.value }}
-      <button class="ml-2 text-accent hover:underline" @click="projects.run">重试</button>
+      <AppButton variant="ghost" size="sm" class="ml-2" @click="projects.run">重试</AppButton>
     </p>
 
     <div v-else-if="projects.loading.value && !projects.data.value" class="p-6 text-center text-sm text-ink-muted">
@@ -148,9 +145,9 @@ async function remove(project: Project): Promise<void> {
               </span>
             </td>
             <td class="px-3 py-2 text-right">
-              <button class="text-xs text-ink-faint transition hover:text-status-failed" @click="remove(project)">
+              <AppButton variant="ghost" size="sm" @click="remove(project)">
                 删除
-              </button>
+              </AppButton>
             </td>
           </tr>
         </tbody>

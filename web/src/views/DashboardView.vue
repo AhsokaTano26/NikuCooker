@@ -3,6 +3,7 @@ import { computed, onMounted, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { api } from '@/api/client'
+import AppButton from '@/components/AppButton.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
 
@@ -40,7 +41,7 @@ function percent(value: number | null | undefined): string {
   <div class="space-y-6">
     <div v-if="overview.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-4">
       <p class="text-sm text-status-failed">{{ overview.error.value }}</p>
-      <button class="mt-2 text-sm text-accent hover:underline" @click="overview.run">重试</button>
+      <AppButton variant="ghost" size="sm" class="mt-2" @click="overview.run">重试</AppButton>
     </div>
 
     <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">

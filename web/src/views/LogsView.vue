@@ -2,10 +2,27 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { ApiError, api, type LogRecord } from '@/api/client'
+import AppSegmented from '@/components/AppSegmented.vue'
+import AppButton from '@/components/AppButton.vue'
+import AppCheckbox from '@/components/AppCheckbox.vue'
 
 const records = ref<LogRecord[]>([])
 const level = ref<'all' | 'warn' | 'error'>('all')
 const following = ref(true)
+
+/** The checkbox reports a new value; the poller needs telling to start or stop. */
+function onFollowing(value: boolean): void {
+  following.value = value
+  poll()
+}
+
+/** The levels a reader picks between. The labels are what the count means:
+ *  "warn" alone hides the errors that explain a failing run. */
+const LEVELS: { value: 'all' | 'warn' | 'error'; label: string }[] = [
+  { value: 'all', label: '全部' },
+  { value: 'warn', label: '警告以上' },
+  { value: 'error', label: '仅错误' },
+]
 const error = ref<string | null>(null)
 
 /** The highest sequence seen, which is what the next poll asks for. */
@@ -87,28 +104,20 @@ function attrsOf(record: LogRecord): string {
 <template>
   <div class="space-y-4">
     <div class="flex flex-wrap items-center gap-3">
-      <div class="flex rounded border border-line bg-surface-raised">
-        <button
-          v-for="option in (['all', 'warn', 'error'] as const)"
-          :key="option"
-          class="px-3 py-1.5 text-sm transition"
-          :class="level === option ? 'bg-accent text-accent-ink' : 'text-ink-muted hover:text-ink'"
-          @click="level = option"
-        >
-          {{ { all: '全部', warn: '警告以上', error: '仅错误' }[option] }}
-        </button>
-      </div>
+      <!-- A segmented control rather than a dropdown: three options that are
+           read at a glance and switched often, which a list behind a click
+           would make slower. -->
+      <AppSegmented v-model="level" :options="LEVELS" />
 
-      <label class="flex items-center gap-2 text-sm text-ink-muted">
-        <input v-model="following" type="checkbox" @change="poll" />
-        跟随
-      </label>
+      <AppCheckbox
+        :model-value="following"
+        label="跟随"
+        @update:model-value="onFollowing"
+      />
 
       <span class="text-xs text-ink-faint">{{ visible.length }} / {{ records.length }} 行</span>
 
-      <button class="ml-auto text-sm text-ink-faint transition hover:text-accent" @click="clear">
-        清空显示
-      </button>
+      <AppButton variant="ghost" size="sm" class="ml-auto" @click="clear">清空显示</AppButton>
     </div>
 
     <p v-if="error" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
