@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,4 +128,50 @@ func (a *App) OutputFiles(projectID string) ([]project.OutputFile, error) {
 // OutputPath resolves one published result for reading.
 func (a *App) OutputPath(projectID, name string) (string, error) {
 	return project.ResolveOutput(a.dataDir, projectID, name)
+}
+
+// ProjectFiles measures a project's directories.
+func (a *App) ProjectFiles(projectID string) ([]project.FileGroup, error) {
+	return project.FileGroups(a.dataDir, projectID)
+}
+
+// RemoveFileGroup deletes one category of a project's files.
+//
+// The artifact rows and the source path go with the directories, because each
+// is the other half of something on disk: an artifact row whose directory is
+// gone hands the next stage an empty folder instead of telling it the artifact
+// is missing, and a source path whose file is gone fails every run at the probe
+// with a message about a missing file rather than about a project that no
+// longer has one.
+func (a *App) RemoveFileGroup(ctx context.Context, projectID, kind string) (int64, error) {
+	if a.Scheduler.AnyRunning() {
+		if _, running := a.Scheduler.Running(projectID); running {
+			return 0, fmt.Errorf("project: a run is in progress; its files are in use")
+		}
+	}
+
+	var extra func(ctx context.Context) error
+	switch kind {
+	case project.GroupArtifacts:
+		extra = func(ctx context.Context) error {
+			_, _, err := a.Artifacts.For(projectID).RemoveAll(ctx)
+			return err
+		}
+	case project.GroupSource:
+		extra = func(ctx context.Context) error {
+			return a.Projects.ClearSourcePath(ctx, projectID)
+		}
+	}
+
+	return project.RemoveGroup(a.dataDir, projectID, kind, extra)
+}
+
+// ProjectLogs lists a project's run logs.
+func (a *App) ProjectLogs(projectID string) ([]project.OutputFile, error) {
+	return project.LogFiles(a.dataDir, projectID)
+}
+
+// LogPath resolves one run log for reading.
+func (a *App) LogPath(projectID, name string) (string, error) {
+	return project.ResolveLog(a.dataDir, projectID, name)
 }

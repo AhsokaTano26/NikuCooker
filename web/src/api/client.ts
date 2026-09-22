@@ -147,7 +147,28 @@ export interface ProjectOutput {
   size_bytes: number
   modified_at: string
   /** A coarse label to group by: subtitle, video, other. */
-  kind: 'subtitle' | 'video' | 'other'
+  kind: 'subtitle' | 'video' | 'other' | 'log'
+}
+
+export type FileGroupKind = 'source' | 'artifacts' | 'output' | 'logs'
+
+/** One category of a project's files. */
+export interface FileGroup {
+  kind: FileGroupKind
+  name: string
+  bytes: number
+  files: number
+  removable: boolean
+  /** What deleting costs, in the user's terms. Shown beside the button, because
+   *  these categories differ enormously in what losing them means. */
+  warning: string
+  detail?: string
+}
+
+export interface ProjectFiles {
+  items: FileGroup[]
+  total_bytes: number
+  logs: ProjectOutput[]
 }
 
 export interface ProjectOutputs {
@@ -177,6 +198,19 @@ export const projects = {
    *  is the browser's own download, with its progress and its filename. */
   outputURL: (id: string, name: string): string =>
     `${API_BASE}/projects/${id}/outputs/${encodeURIComponent(name)}`,
+
+  /** What the project occupies on disk, by category. */
+  files: (id: string, signal?: AbortSignal): Promise<ProjectFiles> =>
+    request(`/projects/${id}/files`, { signal }),
+
+  /** Deletes one category of a project's files. Returns the bytes reclaimed. */
+  removeFiles: (id: string, kind: FileGroupKind): Promise<{ reclaimed_bytes: number }> =>
+    request(`/projects/${id}/files/${kind}`, { method: 'DELETE' }),
+
+  /** The URL a browser opens a run log from. Plain text, not a download: a log
+   *  is read, not saved. */
+  logURL: (id: string, name: string): string =>
+    `${API_BASE}/projects/${id}/logs/${encodeURIComponent(name)}`,
 
   remove: (id: string, options: { confirm: boolean; deleteFiles: boolean }): Promise<void> =>
     request(`/projects/${id}`, {

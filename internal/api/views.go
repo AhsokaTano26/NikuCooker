@@ -35,6 +35,12 @@ type projectView struct {
 	// whether to show progress or a run button.
 	CurrentJob *jobView `json:"current_job"`
 
+	// SizeBytes is what the project occupies on disk. Measured when the view is
+	// built rather than stored, because the number that matters is the one now
+	// — and a cached size is wrong exactly after the cleanup someone is
+	// checking it for.
+	SizeBytes int64 `json:"size_bytes"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -218,6 +224,12 @@ type glossaryView struct {
 	Enabled  bool   `json:"enabled"`
 	Origin   string `json:"origin"`
 
+	// SizeBytes is what the project occupies on disk. Measured when the view is
+	// built rather than stored, because the number that matters is the one now
+	// — and a cached size is wrong exactly after the cleanup someone is
+	// checking it for.
+	SizeBytes int64 `json:"size_bytes"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -257,6 +269,12 @@ type providerView struct {
 	// length. It is what lets the interface say "configured" rather than
 	// leaving the user to guess.
 	HasKey bool `json:"has_key"`
+
+	// SizeBytes is what the project occupies on disk. Measured when the view is
+	// built rather than stored, because the number that matters is the one now
+	// — and a cached size is wrong exactly after the cleanup someone is
+	// checking it for.
+	SizeBytes int64 `json:"size_bytes"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

@@ -271,6 +271,59 @@ func (s *Service) List(ctx context.Context, q ListQuery) ([]*Project, int, error
 	return out, total, rows.Err()
 }
 
+// IdleSince returns the projects nothing has touched for a period.
+//
+// "Touched" means created, edited or run, and the third is the one that needs
+// care: running a project does not write its row, so `updated_at` alone would
+// call a project idle that was run this morning because it was created last
+// year. The most recent run is read from the jobs table, which has an index for
+// exactly this lookup.
+//
+// A project whose newest run is still going is not filtered out here — this
+// asks a question about timestamps, and whether something is running right now
+// is a different question, asked by the caller that knows about the scheduler.
+func (s *Service) IdleSince(ctx context.Context, idle time.Duration) ([]*Project, error) {
+	const query = `
+		SELECT p.id, p.name, p.source_path, p.source_language, p.target_language,
+		       p.style, p.status, p.config_json, p.created_at, p.updated_at
+		FROM projects p
+		LEFT JOIN (
+			SELECT project_id, MAX(created_at) AS last_run FROM jobs GROUP BY project_id
+		) j ON j.project_id = p.id
+		WHERE MAX(p.updated_at, COALESCE(j.last_run, '')) < ?
+		ORDER BY p.updated_at`
+
+	cutoff := time.Now().Add(-idle).UTC().Format(time.RFC3339Nano)
+
+	rows, err := s.db.Read.QueryContext(ctx, query, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("project: list idle: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*Project
+	for rows.Next() {
+		var (
+			p          Project
+			configJSON string
+			createdAt  string
+			updatedAt  string
+		)
+		if err := rows.Scan(&p.ID, &p.Name, &p.SourcePath, &p.SourceLanguage,
+			&p.TargetLanguage, &p.Style, &p.Status, &configJSON,
+			&createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("project: scan idle: %w", err)
+		}
+
+		p.Config = decodeConfig(configJSON)
+		p.CreatedAt = parseTime(createdAt)
+		p.UpdatedAt = parseTime(updatedAt)
+		out = append(out, &p)
+	}
+
+	return out, rows.Err()
+}
+
 // Delete removes a project.
 //
 // Files are removed only when the caller explicitly asks. The safe default is

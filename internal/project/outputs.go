@@ -96,6 +96,16 @@ func ResolveOutput(dataDir, id, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return resolveIn(dir, name)
+}
+
+// resolveIn returns one file inside a directory, or refuses to.
+//
+// Shared by the published results and the run logs, because both take a name
+// out of a URL and both are one mistake away from reading the whole disk. A
+// guard that exists in one place and is copied into another is a guard that
+// gets fixed in one place.
+func resolveIn(dir, name string) (string, error) {
 	if name == "" || name != filepath.Base(name) || name == "." || name == ".." {
 		return "", fmt.Errorf("%w: %s", ErrNoOutput, name)
 	}

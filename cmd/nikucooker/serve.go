@@ -49,6 +49,13 @@ install or point at. The API lives under /api/v1 on the same origin.`,
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
+			// Started here rather than in the application, because a
+			// `nikucooker run` must not decide on its way past that some other
+			// project has expired. The server is the long-lived process, so it
+			// is the one that enforces a retention measured in days.
+			stopMaintenance := application.StartMaintenance(ctx)
+			defer stopMaintenance()
+
 			application.Logger().Info("listening", "addr", srv.Addr(), "version", currentVersion().Version)
 			fmt.Fprintf(cmd.OutOrStdout(), "NikuCooker is serving at http://%s\n", displayAddr(host, port))
 

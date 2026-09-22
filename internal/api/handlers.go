@@ -679,6 +679,9 @@ func (s *Server) projectViewFor(ctx context.Context, p *project.Project) project
 	if duration, err := s.app.Segments.DurationOf(ctx, p.ID); err == nil && duration > 0 {
 		view.Duration = &duration
 	}
+	if bytes, err := project.TotalBytes(s.app.DataDir(), p.ID); err == nil {
+		view.SizeBytes = bytes
+	}
 
 	if job := s.latestJob(ctx, p.ID); job != nil && !job.Status.Terminal() {
 		view.CurrentJob = &jobView{

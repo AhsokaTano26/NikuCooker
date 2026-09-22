@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { ApiError, api, type ProjectOutput } from '@/api/client'
+import { ApiError, api, type FileGroupKind, type ProjectOutput } from '@/api/client'
+import AppBadge from '@/components/AppBadge.vue'
 import AppButton from '@/components/AppButton.vue'
 import { formatBytes, formatDuration, formatTime, useAsync } from '@/composables/useAsync'
 import { useEventStore, type ServerEvent } from '@/stores/events'
@@ -23,6 +24,38 @@ const pipeline = useAsync(() => api.run.pipeline(projectId.value))
  * first run and then stay empty until the page was reloaded.
  */
 const outputs = useAsync(() => api.projects.outputs(projectId.value))
+
+/**
+ * What the project occupies on disk.
+ *
+ * Refetched with the outputs, because they are the same subject seen twice —
+ * one lists the finished files, the other counts everything — and a run changes
+ * both.
+ */
+const files = useAsync(() => api.projects.files(projectId.value))
+
+const filesError = ref<string | null>(null)
+const removingKind = ref<FileGroupKind | null>(null)
+
+async function removeGroup(kind: FileGroupKind, name: string, warning: string): Promise<void> {
+  // The warning is the confirmation. These four categories look identical as
+  // buttons and differ enormously in what losing them costs, so the question
+  // repeats what the row already said rather than asking "are you sure".
+  if (!confirm(`删除「${name}」？\n\n${warning}`)) return
+
+  removingKind.value = kind
+  filesError.value = null
+
+  try {
+    const result = await api.projects.removeFiles(projectId.value, kind)
+    await Promise.all([files.run(), outputs.run()])
+    void result
+  } catch (cause) {
+    filesError.value = cause instanceof ApiError ? cause.message : String(cause)
+  } finally {
+    removingKind.value = null
+  }
+}
 
 /**
  * Live pipeline state, patched from the event stream.
@@ -100,6 +133,7 @@ function onJobStatus(event: ServerEvent): void {
   // moment the list becomes complete. Refetching on the stage events instead
   // would ask too early — the last stage settling is not the run being over.
   void outputs.run()
+  void files.run()
 }
 
 /**
@@ -117,7 +151,7 @@ function scoped(handler: (event: ServerEvent) => void) {
 const unsubscribers: (() => void)[] = []
 
 onMounted(async () => {
-  await Promise.all([project.run(), pipeline.run(), outputs.run()])
+  await Promise.all([project.run(), pipeline.run(), outputs.run(), files.run()])
 
   unsubscribers.push(
     events.on('stage.status', scoped(onStageStatus)),
@@ -134,6 +168,7 @@ onMounted(async () => {
       void project.run()
       void pipeline.run()
       void outputs.run()
+      void files.run()
     }),
   )
 })
@@ -148,6 +183,7 @@ watch(projectId, () => {
   void project.run()
   void pipeline.run()
   void outputs.run()
+  void files.run()
 })
 
 const running = computed(() => current.value?.job?.status === 'running')
@@ -241,6 +277,71 @@ const STATUS_LABEL: Record<StageStatus, string> = {
       <p v-if="actionError" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
         {{ actionError }}
       </p>
+
+      <section
+        v-if="files.data.value && files.data.value.items.length"
+        class="rounded border border-line bg-surface-raised"
+      >
+        <header class="flex items-center justify-between border-b border-line px-4 py-2">
+          <h2 class="text-sm font-medium text-ink-muted">磁盘占用</h2>
+          <span class="text-xs text-ink-faint">共 {{ formatBytes(files.data.value.total_bytes) }}</span>
+        </header>
+
+        <ul class="divide-y divide-line/60">
+          <li v-for="group in files.data.value.items" :key="group.kind" class="px-4 py-3">
+            <div class="flex items-start justify-between gap-4">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm">{{ group.name }}</span>
+                  <AppBadge>{{ formatBytes(group.bytes) }}</AppBadge>
+                  <span v-if="group.files > 0" class="text-xs text-ink-faint">
+                    {{ group.files }} 个文件
+                  </span>
+                </div>
+                <p class="mt-1 text-xs text-ink-faint">{{ group.warning }}</p>
+              </div>
+
+              <AppButton
+                v-if="group.removable && group.bytes > 0"
+                :variant="group.kind === 'source' ? 'danger' : 'secondary'"
+                size="sm"
+                class="shrink-0"
+                :disabled="removingKind !== null"
+                @click="removeGroup(group.kind, group.name, group.warning)"
+              >
+                {{ removingKind === group.kind ? '删除中…' : '删除' }}
+              </AppButton>
+            </div>
+
+            <!-- The logs are the one category listed file by file: they are
+                 few, they are named after what produced them, and the reason to
+                 keep them is to open one. -->
+            <ul v-if="group.kind === 'logs' && files.data.value.logs.length" class="mt-2 space-y-0.5">
+              <li
+                v-for="log in files.data.value.logs"
+                :key="log.name"
+                class="flex items-center justify-between gap-3 text-xs"
+              >
+                <a
+                  :href="api.projects.logURL(projectId, log.name)"
+                  target="_blank"
+                  rel="noopener"
+                  class="truncate font-mono text-ink-muted transition hover:text-accent"
+                >
+                  {{ log.name }}
+                </a>
+                <span class="shrink-0 text-ink-faint">
+                  {{ formatBytes(log.size_bytes) }} · {{ formatTime(log.modified_at) }}
+                </span>
+              </li>
+            </ul>
+          </li>
+        </ul>
+
+        <p v-if="filesError" class="whitespace-pre-line border-t border-line px-4 py-2 text-xs text-status-failed">
+          {{ filesError }}
+        </p>
+      </section>
 
       <!--
         Above the pipeline, because it is the answer to the question someone

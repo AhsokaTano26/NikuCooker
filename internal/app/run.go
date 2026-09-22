@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,7 +13,9 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
 	"github.com/AhsokaTano26/NikuCooker/internal/events"
 	"github.com/AhsokaTano26/NikuCooker/internal/jobs"
+	"github.com/AhsokaTano26/NikuCooker/internal/logging"
 	"github.com/AhsokaTano26/NikuCooker/internal/pipeline"
+	"github.com/AhsokaTano26/NikuCooker/internal/project"
 	"github.com/AhsokaTano26/NikuCooker/internal/qc"
 	"github.com/AhsokaTano26/NikuCooker/internal/segments"
 	"github.com/AhsokaTano26/NikuCooker/internal/stage"
@@ -178,6 +182,31 @@ func (a *App) execute(ctx context.Context, work *prepared, opts RunOptions) {
 	stopHeartbeat := a.Jobs.HeartbeatLoop(ctx, work.JobID, 10*time.Second, a.log)
 	defer stopHeartbeat()
 
+	// The run's log file, and the logger that reaches it.
+	//
+	// Attached here rather than in prepare, because preparing happens for a
+	// pipeline view as well as for a run, and a page that only looks at a
+	// project should not leave a file behind.
+	//
+	// Set on the options the pipeline and every stage read, so one assignment
+	// covers the whole run — including the stages, which each derive their
+	// logger from it with their own attributes added.
+	if stopLog := a.attachRunLog(ctx, work); stopLog != nil {
+		defer stopLog()
+	}
+
+	// The run's own logger, for what the run says about itself. Falls back to
+	// the application's when there is no file, so the lines are logged either
+	// way rather than only when logging to disk happens to have worked.
+	runLog := work.options.Log
+	if runLog == nil {
+		runLog = a.log
+	}
+
+	runLog.Info("run started",
+		"job_id", work.JobID, "project_id", work.ProjectID,
+		"stages", len(work.plan.Stages), "force", opts.Force)
+
 	// The run's own observer persists stage state and publishes events; the
 	// caller's, when there is one, is what draws a progress bar. Both receive
 	// every transition, and neither knows about the other.
@@ -211,9 +240,44 @@ func (a *App) execute(ctx context.Context, work *prepared, opts RunOptions) {
 		With("error_message", message).
 		With("elapsed_s", time.Since(started).Seconds()))
 
-	a.log.Info("run finished",
+	// Through the run's logger rather than the application's, so the file holds
+	// the whole run — including the outcome, which is the line someone opens it
+	// for. The stages already log through this one; the run's own start and
+	// finish were the two lines missing.
+	runLog.Info("run finished",
 		"job_id", work.JobID, "project_id", work.ProjectID,
 		"status", status, "elapsed_s", time.Since(started).Seconds())
+}
+
+// attachRunLog gives a run a logger that also writes to its own log file.
+//
+// Returns a function to close the file, or nil when there is nowhere to write
+// — a run must not fail because its logging did. The file is a record of the
+// run, not a part of it.
+func (a *App) attachRunLog(ctx context.Context, work *prepared) func() {
+	cfg := a.Config()
+	projectDir := project.Dir(a.dataDir, work.ProjectID)
+
+	path := filepath.Join(projectDir, project.DirLogs, work.JobID+".log")
+
+	file, err := logging.CreateRunLog(path, int64(cfg.Retention.LogMaxMB)<<20)
+	if err != nil {
+		a.log.Warn("could not open the run's log file; this run will not be recorded to disk",
+			"project_id", work.ProjectID, "job_id", work.JobID, "error", err)
+		return nil
+	}
+
+	work.options.Log = slog.New(logging.NewMulti(
+		a.log.Handler(),
+		logging.NewFileHandler(file),
+	))
+
+	_ = ctx
+	return func() {
+		if err := file.Close(); err != nil {
+			a.log.Warn("could not close the run's log file", "path", path, "error", err)
+		}
+	}
 }
 
 // pruneCache keeps the translation cache within its configured size.

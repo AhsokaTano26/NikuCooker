@@ -116,6 +116,10 @@ func (s *Server) buildRoutes() *http.ServeMux {
 	// What the last run published, and the files themselves. This is where a
 	// finished project's results are, as opposed to the artifact cache they
 	// were copied out of.
+	mux.HandleFunc("GET /api/v1/projects/{id}/files", s.listProjectFiles)
+	mux.HandleFunc("DELETE /api/v1/projects/{id}/files/{kind}", s.deleteProjectFiles)
+	mux.HandleFunc("GET /api/v1/projects/{id}/logs/{name}", s.downloadLog)
+
 	mux.HandleFunc("GET /api/v1/projects/{id}/outputs", s.listOutputs)
 	mux.HandleFunc("GET /api/v1/projects/{id}/outputs/{name}", s.downloadOutput)
 

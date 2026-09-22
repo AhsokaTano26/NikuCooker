@@ -35,6 +35,7 @@ type Config struct {
 	Artifact    Artifact    `yaml:"artifact"`
 	Worker      Worker      `yaml:"worker"`
 	Render      Render      `yaml:"render"`
+	Retention   Retention   `yaml:"retention"`
 	Log         Log         `yaml:"log"`
 }
 
@@ -293,6 +294,31 @@ type Render struct {
 	AudioBitrate string `yaml:"audio_bitrate"`
 }
 
+// Retention configures what is deleted without being asked.
+//
+// The only settings here that destroy things on their own. Each is off at
+// zero, which is also how a user who wants to keep everything says so.
+type Retention struct {
+	// ProjectDays deletes a project — files and row — that has not been
+	// created, edited or run for this many days. Zero disables it.
+	//
+	// Measured against the most recent of the project's own timestamp and its
+	// last run, because running a project does not touch its row: a project
+	// made last year and run yesterday is a project in use.
+	ProjectDays int `yaml:"project_days"`
+
+	// LogDays deletes a run's log file after this many days. Zero disables it.
+	LogDays int `yaml:"log_days"`
+
+	// LogMaxMB stops writing a run's log once it reaches this size.
+	//
+	// A cap rather than rotation, because a run's log is read as one document:
+	// "what happened during that run" is a question about a file, and a series
+	// of numbered files makes the reader reassemble it. The file says when it
+	// stopped, so a short log is never mistaken for a short run.
+	LogMaxMB int `yaml:"log_max_mb"`
+}
+
 // Log configures logging.
 type Log struct {
 	Level  string `yaml:"level"`
@@ -434,6 +460,15 @@ func Default() *Config {
 			CRF:          18,
 			Preset:       "medium",
 			AudioBitrate: "192k",
+		},
+		Retention: Retention{
+			// A month is long enough that a project someone is working through
+			// slowly survives, and short enough that a disk does not fill with
+			// things nobody remembers making. It deletes the source too, which
+			// is why it is the number most worth changing.
+			ProjectDays: 30,
+			LogDays:     7,
+			LogMaxMB:    8,
 		},
 		Log: Log{
 			Level:  "info",
@@ -579,6 +614,18 @@ func (c *Config) Validate() error {
 	}
 	if c.Artifact.Retention < -1 {
 		add("artifact.retention: must be -1 (keep all) or non-negative, got %d", c.Artifact.Retention)
+	}
+
+	if c.Retention.ProjectDays < 0 {
+		add("retention.project_days: must be zero (keep everything) or a positive number of days, got %d",
+			c.Retention.ProjectDays)
+	}
+	if c.Retention.LogDays < 0 {
+		add("retention.log_days: must be zero (keep everything) or a positive number of days, got %d",
+			c.Retention.LogDays)
+	}
+	if c.Retention.LogMaxMB < 0 {
+		add("retention.log_max_mb: must not be negative, got %d", c.Retention.LogMaxMB)
 	}
 
 	if c.Worker.PoolSize < 1 {

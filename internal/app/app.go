@@ -839,6 +839,16 @@ func (a *App) projectConfig(prj *project.Project) (*config.Config, error) {
 
 // sourcePath resolves a project's source media to an absolute path.
 func (a *App) sourcePath(prj *project.Project) (string, error) {
+	// Checked before the join, because joining an empty path yields the project
+	// directory — which exists, so the stat below would pass and the failure
+	// would surface much later as "is a directory" from whatever tried to read
+	// the media.
+	if prj.SourcePath == "" {
+		return "", fmt.Errorf(
+			"app: project %s has no source media; its video was deleted, so there is "+
+				"nothing to run over. Create a new project from the video to run this again", prj.ID)
+	}
+
 	path := filepath.Join(project.Dir(a.dataDir, prj.ID), filepath.FromSlash(prj.SourcePath))
 	if _, err := os.Stat(path); err != nil {
 		return "", fmt.Errorf(

@@ -53,6 +53,9 @@ export interface Project {
   style: TranslationStyle
   status: ProjectStatus
   duration: number | null
+  /** What the project occupies on disk, measured when the response was built. */
+  size_bytes: number
+
   segment_count: number
   needs_review_count: number
   current_job: JobSummary | null

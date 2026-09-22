@@ -79,6 +79,7 @@ var Groups = []string{
 	"音频提取",
 	"服务端",
 	"流水线",
+	"清理",
 }
 
 // Catalog is every setting the interface can change.
@@ -334,6 +335,25 @@ var Catalog = []Setting{
 			{Value: "context", Label: "背景分析 — 读一遍全篇生成作品背景"},
 			{Value: "render", Label: "渲染 — 产出带字幕的视频"},
 		},
+	},
+
+	// -----------------------------------------------------------------------
+	// 清理
+	// -----------------------------------------------------------------------
+	{
+		Key: "retention.project_days", Name: "项目保留天数", Group: "清理", Kind: KindInt,
+		Help: "超过这么多天没有创建、修改或运行过的项目，会被**连文件一起删除**。" +
+			"运行过就算「动过」，所以一个昨天跑过的老项目不会被删。0 表示永不删除。",
+		Unit: "天", Min: 0, Max: 3650,
+	},
+	{
+		Key: "retention.log_days", Name: "日志保留天数", Group: "清理", Kind: KindInt,
+		Help: "每次运行的日志文件保留多久。0 表示永不删除。", Unit: "天", Min: 0, Max: 365,
+	},
+	{
+		Key: "retention.log_max_mb", Name: "单个日志上限", Group: "清理", Kind: KindInt,
+		Help: "一次运行的日志写到这么大就停。文件末尾会写明已到上限，所以短日志不会被误当成短运行。",
+		Unit: "MB", Min: 1, Max: 1024,
 	},
 }
 

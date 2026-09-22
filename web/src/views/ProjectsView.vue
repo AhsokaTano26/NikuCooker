@@ -6,7 +6,7 @@ import { api, type ListProjectsQuery } from '@/api/client'
 import AppSegmented from '@/components/AppSegmented.vue'
 import AppButton from '@/components/AppButton.vue'
 import AppInput from '@/components/AppInput.vue'
-import { formatDuration, useAsync } from '@/composables/useAsync'
+import { formatBytes, formatDuration, useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
 import type { Project } from '@/types/api'
 
@@ -57,10 +57,18 @@ async function remove(project: Project): Promise<void> {
   // Two deliberate steps: the browser's own modal is a real interruption, and
   // the API refuses an unconfirmed delete anyway. Deleting a project's files is
   // unrecoverable and the confirmation is the only thing standing in front of it.
-  if (!confirm(`删除项目「${project.name}」？文件会保留。`)) return
+  if (
+    !confirm(
+      `删除项目「${project.name}」？\n\n` +
+        `源视频、中间产物、成品和日志都会被一起删除（${formatBytes(project.size_bytes)}），` +
+        `此操作无法撤销。`,
+    )
+  ) {
+    return
+  }
 
   try {
-    await api.projects.remove(project.id, { confirm: true, deleteFiles: false })
+    await api.projects.remove(project.id, { confirm: true, deleteFiles: true })
     await projects.run()
   } catch (cause) {
     actionError.value = cause instanceof Error ? cause.message : String(cause)
@@ -115,6 +123,7 @@ async function remove(project: Project): Promise<void> {
             <th class="px-3 py-2 font-medium">风格</th>
             <th class="px-3 py-2 font-medium">时长</th>
             <th class="px-3 py-2 font-medium">状态</th>
+            <th class="px-3 py-2 font-medium">占用</th>
             <th class="px-3 py-2 font-medium"></th>
           </tr>
         </thead>
@@ -143,6 +152,9 @@ async function remove(project: Project): Promise<void> {
               <span v-if="project.needs_review_count > 0" class="ml-2 text-status-running">
                 {{ project.needs_review_count }} 待审校
               </span>
+            </td>
+            <td class="px-3 py-2 text-xs tabular-nums text-ink-muted">
+              {{ project.size_bytes > 0 ? formatBytes(project.size_bytes) : '—' }}
             </td>
             <td class="px-3 py-2 text-right">
               <AppButton variant="ghost" size="sm" @click="remove(project)">

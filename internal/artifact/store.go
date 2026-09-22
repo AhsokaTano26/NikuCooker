@@ -459,6 +459,65 @@ func (s *Store) GC(ctx context.Context, stage string, retention int) (int, error
 	return removed, nil
 }
 
+// RemoveAll discards every artifact this project has, rows and directories.
+//
+// Both together, because either alone leaves the project in a worse state than
+// before. Deleting only the directories leaves rows whose paths resolve to
+// nothing — and a stage that reads its input through the store would be handed
+// an empty directory rather than being told the artifact is gone. Deleting only
+// the rows leaks the disk the caller was trying to reclaim.
+//
+// Returns how many artifacts went, and the bytes reclaimed.
+func (s *Store) RemoveAll(ctx context.Context) (removed int, bytes int64, err error) {
+	rows, queryErr := s.db.Read.QueryContext(ctx,
+		`SELECT id, path, size_bytes FROM artifacts WHERE project_id = ?`, s.projectID)
+	if queryErr != nil {
+		return 0, 0, fmt.Errorf("artifact: list for removal: %w", queryErr)
+	}
+
+	type row struct {
+		id   string
+		path string
+		size int64
+	}
+	var found []row
+	for rows.Next() {
+		var r row
+		if scanErr := rows.Scan(&r.id, &r.path, &r.size); scanErr != nil {
+			_ = rows.Close()
+			return 0, 0, fmt.Errorf("artifact: scan for removal: %w", scanErr)
+		}
+		found = append(found, r)
+	}
+	_ = rows.Close()
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return 0, 0, fmt.Errorf("artifact: list for removal: %w", rowsErr)
+	}
+
+	for _, r := range found {
+		if _, deleteErr := s.db.Write.ExecContext(ctx,
+			`DELETE FROM artifacts WHERE id = ? AND project_id = ?`, r.id, s.projectID); deleteErr != nil {
+			return removed, bytes, fmt.Errorf("artifact: delete row %s: %w", r.id, deleteErr)
+		}
+
+		// A directory that is already gone is the state we wanted, not a
+		// failure to reach it.
+		if removeErr := os.RemoveAll(s.absDir(r.path)); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+			return removed, bytes, fmt.Errorf("artifact: delete directory %s: %w", r.path, removeErr)
+		}
+
+		removed++
+		bytes += r.size
+	}
+
+	// The per-stage parent directories are left behind empty by the loop above,
+	// and an artifacts directory holding a dozen empty stage folders reads as
+	// "there is still something here" to anyone looking at the disk.
+	_ = os.RemoveAll(filepath.Join(s.projectDir, ArtifactsDir))
+
+	return removed, bytes, nil
+}
+
 // SweepTempDirectories removes leftovers from runs that were killed mid-write.
 //
 // Every temp directory at startup is by definition abandoned: a live writer

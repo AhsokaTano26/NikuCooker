@@ -135,25 +135,7 @@ func (h *Handler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *Handler) Handle(ctx context.Context, record slog.Record) error {
-	entry := Record{
-		Time:  record.Time,
-		Level: levelName(record.Level),
-		Msg:   record.Message,
-	}
-
-	attrs := map[string]any{}
-	for _, attr := range h.attrs {
-		attrs[attr.Key] = attr.Value.Any()
-	}
-	record.Attrs(func(attr slog.Attr) bool {
-		attrs[attr.Key] = attr.Value.Any()
-		return true
-	})
-	if len(attrs) > 0 {
-		entry.Attrs = attrs
-	}
-
-	h.buffer.Add(entry)
+	h.buffer.Add(recordToEntry(h.attrs, record))
 
 	// Written to the wrapped handler unchanged, so the terminal's output has
 	// exactly the attributes the caller supplied — adding the groups here would
@@ -177,6 +159,34 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 		attrs:  h.attrs,
 		groups: append(append([]string(nil), h.groups...), name),
 	}
+}
+
+// recordToEntry converts a slog record into the shape both the buffer and the
+// log file store.
+//
+// Shared so that the same run reads the same way in the interface and in the
+// file. Two conversions would drift, and the drift would show up as a field
+// present in one and missing from the other — with no reason to suspect the
+// logging rather than the stage that wrote it.
+func recordToEntry(group []slog.Attr, record slog.Record) Record {
+	entry := Record{
+		Time:  record.Time,
+		Level: levelName(record.Level),
+		Msg:   record.Message,
+	}
+
+	attrs := map[string]any{}
+	for _, attr := range group {
+		attrs[attr.Key] = attr.Value.Any()
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		attrs[attr.Key] = attr.Value.Any()
+		return true
+	})
+	if len(attrs) > 0 {
+		entry.Attrs = attrs
+	}
+	return entry
 }
 
 // levelName renders a level the way the interface shows it.
