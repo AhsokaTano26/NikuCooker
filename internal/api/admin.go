@@ -348,9 +348,11 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	fillDefaults(config, "", provenance)
 
 	s.respond(w, http.StatusOK, settingsView{
-		Config:     config,
-		Provenance: provenance,
-		DataDir:    s.app.DataDir(),
+		Config:           config,
+		Provenance:       provenance,
+		DataDir:          s.app.DataDir(),
+		ConfigPath:       s.app.ConfigPath(),
+		ConfigFileExists: s.app.ConfigFileExists(),
 	})
 }
 

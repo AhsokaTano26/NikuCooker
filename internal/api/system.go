@@ -29,6 +29,13 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 		Commit:   s.commit,
 		Platform: runtime.GOOS + "-" + runtime.GOARCH,
 		UptimeS:  time.Since(startedAt).Seconds(),
+
+		Features: systemFeatures{
+			PathSource:       s.app.Config().Server.AllowPathSource,
+			MaxUploadBytes:   s.app.Config().Server.MaxUploadBytes,
+			ConfigPath:       s.app.ConfigPath(),
+			ConfigFileExists: s.app.ConfigFileExists(),
+		},
 	}
 
 	s.fillCounts(ctx, &overview.Counts)

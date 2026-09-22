@@ -274,7 +274,10 @@ func TestPhase7PathSourceIsRefusedByDefault(t *testing.T) {
 	if status != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", status, raw)
 	}
-	if code := errorCode(body); code != "INVALID_REQUEST" {
+	// Its own code, not INVALID_REQUEST: the interface branches on it to say
+	// "turn this setting on" rather than "fix your request", and those are
+	// different messages.
+	if code := errorCode(body); code != "PATH_SOURCE_DISABLED" {
 		t.Errorf("code = %q: %s", code, raw)
 	}
 	// The message has to name the setting, or the user has no way to find it.

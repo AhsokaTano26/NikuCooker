@@ -87,6 +87,9 @@ func (s *Server) buildRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/system/health", s.getHealth)
 	mux.HandleFunc("GET /api/v1/events", s.getEvents)
 
+	mux.HandleFunc("POST /api/v1/uploads", s.createUpload)
+	mux.HandleFunc("DELETE /api/v1/uploads/{uploadID}", s.deleteUpload)
+
 	mux.HandleFunc("GET /api/v1/projects", s.listProjects)
 	mux.HandleFunc("POST /api/v1/projects", s.createProject)
 	mux.HandleFunc("GET /api/v1/projects/{id}", s.getProject)
@@ -153,13 +156,18 @@ func (s *Server) buildRoutes() *http.ServeMux {
 type ErrorCode string
 
 const (
-	CodeNotFound    ErrorCode = "NOT_FOUND"
-	CodeInvalid     ErrorCode = "INVALID_REQUEST"
-	CodeConflict    ErrorCode = "CONFLICT"
-	CodeInternal    ErrorCode = "INTERNAL"
-	CodeUnavailable ErrorCode = "UNAVAILABLE"
-	CodeAlreadyRun  ErrorCode = "ALREADY_RUNNING"
-	CodeNotRunning  ErrorCode = "NOT_RUNNING"
+	CodeNotFound ErrorCode = "NOT_FOUND"
+
+	// CodePathSourceDisabled is its own code because the client's response is
+	// its own: this is not a bad request to correct, it is a setting to turn on,
+	// and the interface needs to tell the two apart to say so.
+	CodePathSourceDisabled ErrorCode = "PATH_SOURCE_DISABLED"
+	CodeInvalid            ErrorCode = "INVALID_REQUEST"
+	CodeConflict           ErrorCode = "CONFLICT"
+	CodeInternal           ErrorCode = "INTERNAL"
+	CodeUnavailable        ErrorCode = "UNAVAILABLE"
+	CodeAlreadyRun         ErrorCode = "ALREADY_RUNNING"
+	CodeNotRunning         ErrorCode = "NOT_RUNNING"
 )
 
 // Error is the envelope every failure is rendered as.
@@ -264,6 +272,13 @@ func classify(err error) *Error {
 		return Invalid(strings.TrimPrefix(err.Error(), "segments: invalid: "))
 	case errors.Is(err, glossary.ErrNotFound):
 		return NotFound("glossary entry")
+	case errors.Is(err, project.ErrUploadNotFound):
+		// A malformed id reaches here as well as a missing one, and they are
+		// deliberately not distinguished: an id that was never issued and an id
+		// that was consumed are the same thing to a client, and saying which
+		// would mean answering questions about uploads that are not this
+		// client's.
+		return NotFound("upload")
 	case errors.Is(err, jobs.ErrNotFound):
 		return NotFound("job")
 	case errors.Is(err, jobs.ErrAlreadyRunning):

@@ -97,6 +97,31 @@ type systemOverview struct {
 	Counts systemCounts `json:"counts"`
 	Worker workerView   `json:"worker"`
 	Stats  systemStats  `json:"stats"`
+
+	Features systemFeatures `json:"features"`
+}
+
+// systemFeatures reports what this installation is configured to do.
+//
+// The interface reads it to describe itself honestly before a user commits to a
+// course of action. A capability that is off is a refusal waiting to happen, and
+// a form that only says so after it has been filled in wastes the filling in —
+// which is exactly what the new-project page did while allow_path_source was
+// false by default.
+type systemFeatures struct {
+	// PathSource is whether a project can be created from a server-side path.
+	PathSource bool `json:"path_source"`
+
+	// MaxUploadBytes is the largest file this server will accept. Sent so the
+	// interface can refuse a file it already knows is too large, rather than
+	// streaming twenty gigabytes in order to be told so.
+	MaxUploadBytes int64 `json:"max_upload_bytes"`
+
+	// ConfigPath is the configuration file this process reads, and whether it
+	// is there. Reported even when absent: "no file, and here is where one
+	// goes" is what a user needs in order to change a setting.
+	ConfigPath       string `json:"config_path"`
+	ConfigFileExists bool   `json:"config_file_exists"`
 }
 
 type systemCounts struct {
@@ -253,7 +278,16 @@ type settingsView struct {
 	// four places and guessing.
 	Provenance map[string]string `json:"provenance"`
 
+	// DataDir and ConfigPath are the two paths a user needs in order to change
+	// something: one to find their work, one to edit a setting. Reported
+	// together because "the setting did not take" is answered by the second.
 	DataDir string `json:"data_dir"`
+
+	// ConfigPath is the file this process reads, present or not. An absent file
+	// is not an error — the defaults are complete — but it does mean there is
+	// nowhere to write a change, and the interface has to be able to say so.
+	ConfigPath       string `json:"config_path"`
+	ConfigFileExists bool   `json:"config_file_exists"`
 }
 
 // logRecordView is one log line.

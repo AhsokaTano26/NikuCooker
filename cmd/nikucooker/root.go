@@ -126,6 +126,7 @@ provider you configure.`,
 
 	root.AddCommand(
 		newServeCmd(g),
+		newConfigCmd(g),
 		newVersionCmd(),
 		newDoctorCmd(g),
 		newProjectCmd(g),

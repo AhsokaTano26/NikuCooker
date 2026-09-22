@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
 	"github.com/AhsokaTano26/NikuCooker/internal/config"
@@ -85,8 +86,10 @@ type App struct {
 
 	codeRevision string
 	dataDir      string
+	configPath   string
 
 	Projects  *project.Service
+	Uploads   *project.Uploads
 	Glossary  *glossary.Service
 	Providers *provider.Service
 	Models    *models.Service
@@ -137,13 +140,15 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		environ = os.Environ()
 	}
 
-	// A flag beats the environment, and the environment beats the default of no
-	// file at all. The container image sets NIKUCOOKER_CONFIG, so a mounted
-	// configuration has to be found without a flag — but a user who typed
-	// --config meant it.
+	// A flag beats the environment, which beats the default path. The container
+	// image sets NIKUCOOKER_CONFIG, so a mounted configuration has to be found
+	// without a flag — but a user who typed --config meant it.
 	configPath := opts.ConfigPath
 	if configPath == "" {
 		configPath = config.ConfigFileFromEnv(environ)
+	}
+	if configPath == "" {
+		configPath = config.DefaultPath
 	}
 
 	fileLayer, err := config.FileLayer(configPath)
@@ -220,14 +225,16 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		return nil, fmt.Errorf("app: %w", err)
 	}
 
-	return &App{
+	application := &App{
 		cfg:          cfg,
 		provenance:   provenance,
 		db:           db,
 		log:          opts.Log,
 		codeRevision: opts.CodeRevision,
 		dataDir:      cfg.Storage.DataDir,
+		configPath:   configPath,
 		Projects:     project.NewService(db, cfg.Storage.DataDir),
+		Uploads:      project.NewUploads(cfg.Storage.DataDir),
 		Glossary:     glossary.NewService(db),
 		Providers:    provider.NewService(db),
 		Models:       modelService,
@@ -241,7 +248,39 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		Events:       events.NewBus(events.DefaultBufferSize),
 		Logs:         logBuffer,
 		registry:     registry,
-	}, nil
+	}
+
+	// Swept once per process, here rather than on a timer: an abandoned upload
+	// is only created by a user walking away, and the moment to notice is when
+	// someone comes back. A ticker would be a goroutine and a lifetime to
+	// manage for work that happens at most once per few hours.
+	application.sweepUploads()
+
+	return application, nil
+}
+
+// uploadRetention is how long an upload waits to become a project.
+//
+// Long, because the cost of being wrong is asymmetric: sweeping something a
+// user is still filling a form in for loses a multi-gigabyte transfer, while
+// keeping it a day longer costs disk that was going to be freed anyway.
+const uploadRetention = 24 * time.Hour
+
+func (a *App) sweepUploads() {
+	if a.Uploads == nil {
+		return
+	}
+
+	removed, err := a.Uploads.Sweep(uploadRetention)
+	if err != nil {
+		// Never fatal: an unwritable staging directory is a problem for
+		// uploading, which will report it, not for listing projects.
+		a.log.Debug("sweeping stale uploads", "error", err)
+		return
+	}
+	if removed > 0 {
+		a.log.Info("discarded stale uploads", "count", removed)
+	}
 }
 
 // Close releases the resources an App holds.
@@ -269,6 +308,19 @@ func (a *App) DB() *database.DB { return a.db }
 
 // DataDir reports the data root.
 func (a *App) DataDir() string { return a.dataDir }
+
+// ConfigPath reports the configuration file this process reads.
+//
+// Reported even when the file does not exist, because "there is no file and
+// here is where one would go" is the answer a user needs — an empty string
+// would leave them with nothing to act on.
+func (a *App) ConfigPath() string { return a.configPath }
+
+// ConfigFileExists reports whether that file is actually there.
+func (a *App) ConfigFileExists() bool {
+	_, err := os.Stat(a.configPath)
+	return err == nil
+}
 
 // Registry returns the pipeline definition.
 func (a *App) Registry() *stage.Registry { return a.registry }

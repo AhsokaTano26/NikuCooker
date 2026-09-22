@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/glossary"
@@ -84,9 +86,7 @@ type sourceSelector struct {
 	Kind string `json:"kind"` // "path" | "upload"
 	Path string `json:"path,omitempty"`
 
-	// UploadID names a previously uploaded file. Uploads arrive in a later
-	// phase; the field exists so the contract does not have to change shape
-	// when they do.
+	// UploadID names a file staged by POST /api/v1/uploads.
 	UploadID string `json:"upload_id,omitempty"`
 }
 
@@ -97,23 +97,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.Source.Kind != "path" {
-		s.fail(w, Invalid(
-			"only source.kind \"path\" is supported; uploading a file from the browser arrives in a later phase"))
-		return
-	}
-
-	// Reading an arbitrary server-side path is a real capability, and it is
-	// opt-in (config: server.allow_path_source). Handing it out implicitly
-	// would let anything that can reach this port read any file the process
-	// can.
-	if !s.app.Config().Server.AllowPathSource {
-		s.fail(w, Failed(http.StatusForbidden, CodeInvalid,
-			"creating a project from a server-side path is disabled; set server.allow_path_source to enable it"))
-		return
-	}
-
-	absolute, apiErr := validateSourcePath(body.Source.Path)
+	origin, sourceName, apiErr := s.resolveSource(body.Source)
 	if apiErr != nil {
 		s.fail(w, apiErr)
 		return
@@ -125,17 +109,106 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		TargetLanguage: body.TargetLanguage,
 		Style:          body.Style,
 		Config:         body.Config,
-		SourceName:     fileBase(absolute),
-		SourceOrigin:   absolute,
+		SourceName:     sourceName,
+		SourceOrigin:   origin,
 	})
 	if err != nil {
 		s.fail(w, Invalid(err.Error()).Wrap(err))
 		return
 	}
 
+	// The staged file has just been moved into the project, so what remains is
+	// an empty directory. Removing it is tidiness rather than correctness — a
+	// leftover is swept eventually — and a failure here must not fail a project
+	// that was created successfully.
+	if body.Source.Kind == "upload" {
+		_ = s.app.Uploads.Remove(body.Source.UploadID)
+	}
+
 	s.emitProject(created.ID)
 
 	s.respond(w, http.StatusCreated, s.projectViewFor(r.Context(), created))
+}
+
+// resolveSource turns the request's source selector into a file on disk.
+//
+// The two kinds differ in more than where the bytes are: one names a path the
+// user has to be trusted with, the other names something this server wrote
+// itself. Deciding that here keeps the difference in one place instead of
+// spread through the handler.
+func (s *Server) resolveSource(source sourceSelector) (origin, name string, apiErr *Error) {
+	switch source.Kind {
+	case "upload":
+		staged, err := s.app.Uploads.Get(source.UploadID)
+		if err != nil {
+			if errors.Is(err, project.ErrUploadNotFound) {
+				// Expected rather than exceptional: this is what a double-clicked
+				// "create" looks like, because the first request moved the file
+				// away and the second finds nothing to move.
+				return "", "", Failed(http.StatusNotFound, CodeNotFound,
+					"that upload is no longer available; it may have been used already, discarded, or expired")
+			}
+			return "", "", classify(err)
+		}
+		return staged.Path, staged.Name, nil
+
+	case "path":
+		// Reading an arbitrary server-side path is a real capability, and it is
+		// opt-in (config: server.allow_path_source). Handing it out implicitly
+		// would let anything that can reach this port read any file the process
+		// can.
+		if !s.app.Config().Server.AllowPathSource {
+			return "", "", Failed(http.StatusForbidden, CodePathSourceDisabled, s.pathSourceRefusal())
+		}
+
+		absolute, apiErr := validateSourcePath(source.Path)
+		if apiErr != nil {
+			return "", "", apiErr
+		}
+		return absolute, fileBase(absolute), nil
+
+	case "":
+		return "", "", Invalid("a source is required: set source.kind to \"path\" or \"upload\"")
+	default:
+		return "", "", Invalid(
+			"unknown source.kind " + strconv.Quote(source.Kind) + "; expected \"path\" or \"upload\"")
+	}
+}
+
+// pathSourceRefusal explains how to enable this rather than only that it is off.
+//
+// The setting lives in a file that need not exist, so "set server.allow_path_source"
+// on its own leaves a user with nowhere to put it. Naming the path the process
+// actually reads — and how to create that file when there is not one — is the
+// difference between a refusal and an instruction.
+func (s *Server) pathSourceRefusal() string {
+	var b strings.Builder
+
+	b.WriteString("creating a project from a server-side path is disabled (server.allow_path_source).\n\n")
+
+	// Absolutised for the message. The configured path may be relative, and
+	// "edit nikucooker.yaml" means nothing to someone reading it in a browser
+	// who cannot see the server's working directory.
+	path := s.app.ConfigPath()
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+
+	if s.app.ConfigFileExists() {
+		b.WriteString("Add this to " + path + ", then restart:\n")
+	} else {
+		b.WriteString("No configuration file exists yet. `nikucooker config init` writes " + path + ";\n")
+		b.WriteString("add this to it, then restart:\n")
+	}
+
+	b.WriteString("\n  server:\n    allow_path_source: true\n\n")
+
+	// Said plainly, because the setting is a real capability: it reads whatever
+	// path it is handed, not only video files.
+	b.WriteString("This lets the server read any file it can reach, so enable it only where\n")
+	b.WriteString("everyone who can reach the port is someone you would hand the disk to.")
+
+	return b.String()
 }
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {

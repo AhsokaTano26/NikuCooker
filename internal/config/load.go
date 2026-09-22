@@ -149,6 +149,18 @@ func (c *Config) AsMap() (map[string]any, error) {
 	return out, nil
 }
 
+// DefaultPath is the configuration file read when nothing names one.
+//
+// Without a default, a user who has not passed --config has no file to edit and
+// no way to discover that they could. That is a dead end the first time they
+// need a setting the defaults do not provide — which is exactly the situation
+// server.allow_path_source creates.
+//
+// Relative to the working directory, which is where a person running the binary
+// from a checkout expects to find it, and which the container overrides with
+// NIKUCOOKER_CONFIG.
+const DefaultPath = "nikucooker.yaml"
+
 // ConfigFileFromEnv returns the configuration file named by the environment.
 //
 // Separate from the bindings below because it selects the file rather than
@@ -182,15 +194,30 @@ func FileLayer(path string) (Layer, error) {
 		return Layer{}, fmt.Errorf("config: reading %s: %w", path, err)
 	}
 
+	layer, err := ParseLayer(SourceFile, raw)
+	if err != nil {
+		// The path is added here rather than inside ParseLayer, which has no way
+		// to know what the bytes in front of it were named.
+		return Layer{}, fmt.Errorf("config: parsing %s: %w", path, err)
+	}
+	return layer, nil
+}
+
+// ParseLayer reads a configuration document that has already been read.
+//
+// Separate from FileLayer so that a configuration can be checked without being
+// written to disk first, which is how `nikucooker config init` proves the file
+// it is about to create is one the program can start on.
+func ParseLayer(source Source, raw []byte) (Layer, error) {
 	data := map[string]any{}
 	if len(bytes.TrimSpace(raw)) > 0 {
 		dec := yaml.NewDecoder(bytes.NewReader(raw))
 		dec.KnownFields(true)
 		if err := dec.Decode(&data); err != nil {
-			return Layer{}, fmt.Errorf("config: parsing %s: %w", path, err)
+			return Layer{}, err
 		}
 	}
-	return Layer{Source: SourceFile, Data: data}, nil
+	return Layer{Source: source, Data: data}, nil
 }
 
 // ---------------------------------------------------------------------------
