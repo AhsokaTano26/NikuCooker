@@ -90,6 +90,14 @@ type Options struct {
 	// Empty means no context is available and the prompt says so.
 	ContextDocument string
 
+	// Neighbourhood supplies the lines around a single-line request.
+	//
+	// A batch carries its own neighbours, because its lines are adjacent in the
+	// slice. A one-line request has none by construction, and translating a
+	// line in isolation is exactly the case where the surrounding dialogue
+	// matters most — it is usually a conversation being fixed, not a sentence.
+	Neighbourhood *Neighbourhood
+
 	// Glossary is every entry in scope. Only those occurring in the lines being
 	// translated are sent.
 	Glossary []glossary.Entry
@@ -119,6 +127,12 @@ func (o Options) withDefaults() Options {
 		o.PromptName = DefaultPromptName
 	}
 	return o
+}
+
+// Neighbourhood is the text around a line being translated on its own.
+type Neighbourhood struct {
+	Before []string
+	After  []string
 }
 
 // DefaultPromptName is the template used when none is named.
@@ -813,12 +827,27 @@ func (t *Translator) buildPrompt(
 	}
 	applicable := glossary.Match(opts.Glossary, pendingTexts)
 
+	before := renderContextLines(current.before)
+	after := renderContextLines(current.after)
+
+	// A single-line request has no batch to take neighbours from, so the
+	// caller's are used instead. The batch's win when both exist: they are
+	// adjacent to the lines being translated, which the caller's may not be.
+	if opts.Neighbourhood != nil {
+		if before == "" {
+			before = strings.Join(opts.Neighbourhood.Before, "\n")
+		}
+		if after == "" {
+			after = strings.Join(opts.Neighbourhood.After, "\n")
+		}
+	}
+
 	user, err := template.Render(promptData{
 		Context:       opts.ContextDocument,
 		Glossary:      glossary.Block(applicable),
 		StyleGuidance: strings.TrimSpace(guidance),
-		ContextBefore: renderContextLines(current.before),
-		ContextAfter:  renderContextLines(current.after),
+		ContextBefore: before,
+		ContextAfter:  after,
 		Lines:         lines,
 	})
 	if err != nil {

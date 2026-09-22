@@ -117,11 +117,7 @@ func (a *App) prepare(ctx context.Context, opts RunOptions) (*prepared, error) {
 			TargetLanguage: prj.TargetLanguage,
 			Style:          prj.Style,
 		},
-		Services: stage.Services{
-			Providers:   a.Providers,
-			Glossary:    a.Glossary,
-			Translation: a.Cache,
-		},
+		Services:          a.stageServices(),
 		CodeRevision:      a.codeRevision,
 		SourceFingerprint: sourceFingerprint,
 		SourcePath:        sourcePath,
@@ -231,21 +227,26 @@ func jobOutcome(ctx context.Context, runErr error) (jobs.Status, string, string)
 // project's current state, which a user may then edit. A failure here does not
 // fail the run — the artifacts are on disk and the work is not lost — but it is
 // logged loudly, because it means the UI will show stale lines.
+//
+// It runs as soon as the lines exist rather than at the end of the run, because
+// the stages after translation read the table: writing it afterwards would mean
+// the subtitles and the render were built from the artifact, and every edit a
+// user had made would be missing from the file they asked for.
 func (a *App) persist(ctx context.Context, work *prepared, opts RunOptions) {
 	// A cancelled run's partial output is deliberately not written. Half a
 	// transcript presented as the project's current state is worse than the
 	// previous state, which was at least complete.
 	ctx = context.WithoutCancel(ctx)
 
+	// By now the lines themselves are stored — the observer wrote them when
+	// translation settled, so that the stages after it could read them. What is
+	// left is the report, which is written once the run is over because the
+	// findings describe the run rather than the project.
 	set, lineage := linesFromPlan(a, work)
 	if set == nil {
 		return
 	}
-
-	if err := a.Segments.ReplaceFromArtifacts(ctx, work.ProjectID, set, lineage); err != nil {
-		a.log.Error("could not store the project's lines", "project_id", work.ProjectID, "error", err)
-		return
-	}
+	_ = lineage
 
 	ordinals := segments.OrdinalMap(work.ProjectID, set)
 
@@ -342,6 +343,16 @@ func (o *runObserver) StageProgress(ctx context.Context, plan *pipeline.StagePla
 func (o *runObserver) StageSettled(ctx context.Context, plan *pipeline.StagePlan) {
 	o.runner.StageSettled(ctx, plan)
 
+	// The moment the lines exist, they are written to the project's rows. Every
+	// stage after this one reads them from there, so leaving it until the run
+	// finished would build the subtitles from the artifact and drop whatever
+	// the user had edited.
+	if name := plan.Stage.Spec().Name; name == "translation" || name == "polish" {
+		if plan.State.Succeeded() {
+			o.app.persistLines(ctx, o.projectID, plan)
+		}
+	}
+
 	event := events.New(events.TypeStageStatus).
 		ForProject(o.projectID).
 		ForJob(o.jobID).
@@ -383,6 +394,28 @@ func (a *App) emit(event events.Event) {
 		return
 	}
 	a.Events.Emit(event)
+}
+
+// persistLines writes one stage's output into the project's rows.
+func (a *App) persistLines(ctx context.Context, projectID string, plan *pipeline.StagePlan) {
+	if plan.Artifact == nil {
+		return
+	}
+
+	// Detached from the run's context: this is a write that must land even if
+	// the run is being cancelled, and the rows it produces are already complete.
+	ctx = context.WithoutCancel(ctx)
+
+	var set subtitle.Set
+	if err := a.Artifacts.For(projectID).Decode(plan.Artifact, &set); err != nil {
+		a.log.Error("could not read a stage's lines", "stage", plan.Stage.Spec().Name, "error", err)
+		return
+	}
+
+	lineage := segments.Lineage{TranslationArtifactID: plan.Artifact.ID}
+	if err := a.Segments.ReplaceFromArtifacts(ctx, projectID, &set, lineage); err != nil {
+		a.log.Error("could not store the project's lines", "project_id", projectID, "error", err)
+	}
 }
 
 // ---------------------------------------------------------------------------

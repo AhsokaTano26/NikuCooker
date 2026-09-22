@@ -70,10 +70,25 @@ func (s *Stage) ConfigSubtree(cfg *config.Config) any {
 	}{cfg.Subtitle.Formats, cfg.Subtitle.Preset, cfg.Subtitle.Bilingual}
 }
 
-// Fingerprint returns nothing: the writer is a pure function of the lines and
-// the configuration, and both are already in the key.
-func (s *Stage) Fingerprint(context.Context, *stage.Env) (map[string]string, error) {
-	return nil, nil
+// Fingerprint records the project's current lines.
+//
+// The lines are an external input — they change when a user edits one, which is
+// neither configuration nor an upstream artifact. Leaving them out would serve
+// the previous subtitle files from cache after an edit, and the video that came
+// from them would be missing the correction with nothing to say why.
+func (s *Stage) Fingerprint(ctx context.Context, env *stage.Env) (map[string]string, error) {
+	if env.Services.Lines == nil {
+		return nil, nil
+	}
+
+	digest, err := env.Services.Lines.LinesHash(ctx, env.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if digest == "" {
+		return nil, nil
+	}
+	return map[string]string{"lines": digest}, nil
 }
 
 // Manifest records what was written.
@@ -88,10 +103,11 @@ type Manifest struct {
 	Bilingual bool   `json:"bilingual"`
 	Preset    string `json:"preset"`
 
-	// Polished records whether these lines came from the polish pass. It is
-	// provenance the user can act on: a polished file that reads worse than the
-	// unpolished one means the pass should be turned off for this project.
-	Polished bool `json:"polished"`
+	// FromStore records whether these lines came from the project's stored
+	// lines rather than fresh from the pipeline. It is provenance the user can
+	// act on: a file built from the store includes their edits, and one built
+	// from the artifact does not.
+	FromStore bool `json:"from_store"`
 
 	Files []File `json:"files"`
 
@@ -128,7 +144,7 @@ func (m *Manifest) FileFor(format string) (File, bool) {
 
 // Run writes the files.
 func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) {
-	set, polished, err := lines(env)
+	set, fromStore, err := lines(ctx, env)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +169,7 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 		TargetLanguage: set.TargetLanguage,
 		Bilingual:      cfg.Bilingual,
 		Preset:         preset.Name,
-		Polished:       polished,
+		FromStore:      fromStore,
 		Files:          []File{},
 		NeedsReview:    len(set.NeedsReview()),
 	}
@@ -189,7 +205,7 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 			"needs_review":    manifest.NeedsReview,
 			"bilingual":       cfg.Bilingual,
 			"preset":          preset.Name,
-			"polished":        polished,
+			"from_store":      fromStore,
 			"source_language": set.SourceLanguage,
 			"target_language": set.TargetLanguage,
 		},
@@ -202,14 +218,28 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 // the full set with the same ids, so preferring one is a straight substitution
 // rather than a merge — and a merge would be wrong, because a line the polish
 // pass declined to change is a deliberate "this is already good", not a gap.
-func lines(env *stage.Env) (*subtitle.Set, bool, error) {
+func lines(ctx context.Context, env *stage.Env) (*subtitle.Set, bool, error) {
+	// The project's current lines come first. They are the artifact's content
+	// with any edits and review decisions applied, and they are what the user
+	// believes the project says.
+	if env.Services.Lines != nil {
+		current, err := env.Services.Lines.CurrentLines(ctx, env.ProjectID)
+		if err != nil {
+			return nil, false, fmt.Errorf("subtitle: %w", err)
+		}
+		if current != nil && len(current.Segments) > 0 {
+			return current, true, nil
+		}
+	}
+
+	// Nothing stored yet — the first run — so the artifact is the only source.
 	var polished subtitle.Set
 	ok, err := env.ReadOptional("polish", &polished)
 	if err != nil {
 		return nil, false, fmt.Errorf("subtitle: %w", err)
 	}
 	if ok && len(polished.Segments) > 0 {
-		return &polished, true, nil
+		return &polished, false, nil
 	}
 
 	var set subtitle.Set

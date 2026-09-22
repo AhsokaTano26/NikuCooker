@@ -44,15 +44,25 @@ func (s *Stage) Spec() stage.Spec {
 // ConfigSubtree returns the thresholds the rules check against.
 func (s *Stage) ConfigSubtree(cfg *config.Config) any { return cfg.QC }
 
-// Fingerprint returns nothing.
+// Fingerprint records the project's current lines.
 //
-// The glossary is read but deliberately kept out of the key. A glossary edit
-// changes the findings, not the subtitles: folding it in would invalidate the
-// QC artifact and re-run it, which is what already happens because the
-// translation artifact upstream changes with it. Including it here as well
-// would be a second, redundant lever on the same outcome.
-func (s *Stage) Fingerprint(context.Context, *stage.Env) (map[string]string, error) {
-	return nil, nil
+// The glossary is read but kept out of the key: a glossary edit changes what is
+// reported, not what is stored, and the findings are recomputed every run
+// anyway because they are replaced rather than accumulated. The lines are in the
+// key because an edit changes which line each finding belongs to.
+func (s *Stage) Fingerprint(ctx context.Context, env *stage.Env) (map[string]string, error) {
+	if env.Services.Lines == nil {
+		return nil, nil
+	}
+
+	digest, err := env.Services.Lines.LinesHash(ctx, env.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if digest == "" {
+		return nil, nil
+	}
+	return map[string]string{"lines": digest}, nil
 }
 
 // Run checks the lines.
@@ -68,7 +78,7 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 		})
 	}
 
-	set, err := s.lines(env)
+	set, err := s.lines(ctx, env)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +142,20 @@ func (s *Stage) writeReport(env *stage.Env, report *qc.Report) (*stage.Result, e
 
 // lines returns the lines to check, preferring the polished set when the polish
 // stage ran.
-func (s *Stage) lines(env *stage.Env) (*subtitle.Set, error) {
+func (s *Stage) lines(ctx context.Context, env *stage.Env) (*subtitle.Set, error) {
+	// The stored lines first, for the same reason the subtitle stage reads
+	// them: they are what the user believes the project says, and auditing the
+	// intermediate artifact would report on a file nobody will see.
+	if env.Services.Lines != nil {
+		current, err := env.Services.Lines.CurrentLines(ctx, env.ProjectID)
+		if err != nil {
+			return nil, fmt.Errorf("qc: %w", err)
+		}
+		if current != nil && len(current.Segments) > 0 {
+			return current, nil
+		}
+	}
+
 	var polished subtitle.Set
 	ok, err := env.ReadOptional("polish", &polished)
 	if err != nil {

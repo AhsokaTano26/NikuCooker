@@ -242,11 +242,14 @@ func needsSpace(previous, current string) bool {
 	// A space goes between two words only when both are written in a script
 	// that uses them. Japanese and Chinese are not, which is why joining
 	// Whisper's words for those languages must not insert anything.
-	return usesSpaces(last) && usesSpaces(first)
+	return UsesSpaces(last) && UsesSpaces(first)
 }
 
-// usesSpaces reports whether a script separates words with spaces.
-func usesSpaces(r rune) bool {
+// UsesSpaces reports whether a script separates words with spaces.
+//
+// Exported because joining two subtitle lines needs the same answer as joining
+// two words: a space between two Latin texts, nothing between two CJK ones.
+func UsesSpaces(r rune) bool {
 	switch {
 	case unicode.Is(unicode.Han, r),
 		unicode.Is(unicode.Hiragana, r),

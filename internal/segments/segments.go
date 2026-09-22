@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
 	"github.com/AhsokaTano26/NikuCooker/internal/database"
 	"github.com/AhsokaTano26/NikuCooker/internal/qc"
 	"github.com/AhsokaTano26/NikuCooker/internal/subtitle"
@@ -30,6 +31,14 @@ import (
 
 // ErrNotFound reports a segment that does not exist.
 var ErrNotFound = errors.New("segments: not found")
+
+// ErrInvalid reports a request a user can fix: a split point inside a word, a
+// line with no timings, an interval that ends before it starts.
+//
+// Distinct from a database failure, which is nobody's fault and deserves a 500.
+// The API maps this one to a 400 carrying the repository's message, which is
+// written to be read by the person who has to act on it.
+var ErrInvalid = errors.New("segments: invalid")
 
 // ReviewState is where a line stands in the review workflow.
 type ReviewState string
@@ -41,6 +50,14 @@ const (
 	ReviewRejected ReviewState = "rejected"
 	ReviewEdited   ReviewState = "edited"
 )
+
+// Reviewed reports whether a state is a decision a reviewer made.
+//
+// "none" and "pending" are the absence of a decision, and treating either as
+// one would let a client mark a line approved by sending an empty string.
+func (r ReviewState) Reviewed() bool {
+	return r == ReviewApproved || r == ReviewRejected
+}
 
 // Record is one stored line, shaped the way the API serves it.
 type Record struct {
@@ -566,4 +583,112 @@ func (r *Repository) DurationOf(ctx context.Context, projectID string) (float64,
 		return 0, fmt.Errorf("segments: read duration: %w", err)
 	}
 	return duration.Float64, nil
+}
+
+// CurrentLines returns the project's lines as a subtitle set.
+//
+// The table is the project's current state, which is what an editor changes and
+// what a render should use. The artifact is the record of what a particular run
+// produced, which is a different question — and the one that would silently drop
+// a user's corrections if the output stages read it instead.
+func (r *Repository) CurrentLines(ctx context.Context, projectID string) (*subtitle.Set, error) {
+	records, _, err := r.List(ctx, projectID, ListQuery{Limit: 500})
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+
+	// Paged, because the repository caps a page at 500 and a feature-length
+	// work is several thousand lines. Reading only the first page would render
+	// a truncated film.
+	for offset := 500; ; offset += 500 {
+		page, total, err := r.List(ctx, projectID, ListQuery{Limit: 500, Offset: offset})
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 || len(records) >= total {
+			break
+		}
+		records = append(records, page...)
+	}
+
+	set := &subtitle.Set{
+		SourceLanguage: records[0].SourceLanguage,
+		TargetLanguage: records[0].TargetLanguage,
+		Segments:       make([]*subtitle.Segment, 0, len(records)),
+	}
+
+	for _, record := range records {
+		segment := &subtitle.Segment{
+			ID:                    record.ID,
+			Start:                 record.Start,
+			End:                   record.End,
+			Speaker:               record.Speaker,
+			SourceLanguage:        record.SourceLanguage,
+			TargetLanguage:        record.TargetLanguage,
+			SourceText:            record.SourceText,
+			TranslatedText:        record.TranslatedText,
+			Words:                 record.Words,
+			ASRConfidence:         record.ASRConfidence,
+			TranslationConfidence: record.TranslationConfidence,
+			CPS:                   record.CPS,
+			NeedsReview:           record.NeedsReview,
+			Tags:                  record.Tags,
+			Metadata:              record.Metadata,
+		}
+		if segment.Tags == nil {
+			segment.Tags = []string{}
+		}
+		set.Segments = append(set.Segments, segment)
+	}
+
+	return set, nil
+}
+
+// LinesHash digests the project's current lines.
+//
+// It is what makes an edit invalidate the stages that produce output from them.
+// Without it, changing a line would leave the subtitle and render artifacts
+// describing the previous text, and a re-run would serve them from cache — a
+// video with the correction missing and nothing to say why.
+//
+// Only what a render depends on is hashed. A review decision or a resolved
+// finding does not change a single character of the output, and folding those in
+// would re-render a film because someone ticked a checkbox.
+func (r *Repository) LinesHash(ctx context.Context, projectID string) (string, error) {
+	records, _, err := r.List(ctx, projectID, ListQuery{Limit: 500})
+	if err != nil {
+		return "", err
+	}
+	if len(records) == 0 {
+		return "", nil
+	}
+
+	for offset := 500; ; offset += 500 {
+		page, total, err := r.List(ctx, projectID, ListQuery{Limit: 500, Offset: offset})
+		if err != nil {
+			return "", err
+		}
+		if len(page) == 0 || len(records) >= total {
+			break
+		}
+		records = append(records, page...)
+	}
+
+	var b strings.Builder
+	for _, record := range records {
+		text := record.SourceText
+		if record.TranslatedText != nil {
+			text = *record.TranslatedText
+		}
+		fmt.Fprintf(&b, "%d\x1f%.3f\x1f%.3f\x1f%s\x1e", record.Ordinal, record.Start, record.End, text)
+	}
+
+	digest, err := artifact.FingerprintBytes("lines", b.String())
+	if err != nil {
+		return "", err
+	}
+	return digest, nil
 }

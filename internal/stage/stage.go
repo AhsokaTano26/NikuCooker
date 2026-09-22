@@ -24,6 +24,7 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/glossary"
 	"github.com/AhsokaTano26/NikuCooker/internal/media"
 	"github.com/AhsokaTano26/NikuCooker/internal/provider"
+	"github.com/AhsokaTano26/NikuCooker/internal/subtitle"
 	"github.com/AhsokaTano26/NikuCooker/internal/translation"
 	"github.com/AhsokaTano26/NikuCooker/pkg/protocol"
 )
@@ -232,6 +233,29 @@ type Services struct {
 	// Translation is the line cache, which is global and survives across
 	// projects.
 	Translation *translation.Cache
+
+	// Lines reads a project's current subtitle lines.
+	//
+	// This is the one place a stage reaches past the artifact system, and it is
+	// deliberate. The table is the project's current state — what an editor
+	// changes — while an artifact is the record of what one run produced. The
+	// stages that turn lines into output must work from the former, or a user's
+	// corrections would be silently dropped the next time anything ran.
+	//
+	// A stage that reads it must fold LinesHash into its Fingerprint, so the
+	// cache key still describes the work.
+	Lines LinesReader
+}
+
+// LinesReader reads a project's current subtitle lines.
+type LinesReader interface {
+	// CurrentLines returns the lines, or nil when the project has none yet —
+	// the state during a run's first pass, when the artifact is the only
+	// source.
+	CurrentLines(ctx context.Context, projectID string) (*subtitle.Set, error)
+
+	// LinesHash digests them, for a stage's cache key.
+	LinesHash(ctx context.Context, projectID string) (string, error)
 }
 
 // ProjectInfo is what a stage needs to know about the project it is serving.
@@ -316,8 +340,8 @@ func (s Services) resolveLLM(ctx context.Context, cfg *config.Config) (*provider
 // inlineProvider builds a provider from the flat configuration keys.
 func inlineProvider(cfg config.Translation) (*provider.Provider, error) {
 	if cfg.BaseURL == "" || cfg.Model == "" {
-		return nil, errors.New(
-			"stage: no language-model provider is configured; add one, or set translation.base_url and translation.model")
+		return nil, fmt.Errorf("%w: add one, or set translation.base_url and translation.model",
+			provider.ErrNotConfigured)
 	}
 
 	record := &provider.Provider{

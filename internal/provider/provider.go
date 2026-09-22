@@ -23,6 +23,13 @@ import (
 // ErrNotFound reports a provider that does not exist.
 var ErrNotFound = errors.New("provider: not found")
 
+// ErrNotConfigured reports that nothing is set up to serve a request.
+//
+// Distinct from a failure reaching a provider: this one is fixed by adding a
+// provider or naming one, and the API reports it as a client-visible problem
+// rather than as a server fault with a message nobody can act on.
+var ErrNotConfigured = errors.New("provider: none is configured")
+
 // Kind is what a provider is used for.
 type Kind string
 
@@ -205,7 +212,7 @@ func (s *Service) Default(ctx context.Context, kind Kind) (*Provider, error) {
 
 	switch len(enabled) {
 	case 0:
-		return nil, fmt.Errorf("provider: no enabled %s provider is configured", kind)
+		return nil, fmt.Errorf("%w: no enabled %s provider", ErrNotConfigured, kind)
 	case 1:
 		return &enabled[0], nil
 	default:
@@ -213,9 +220,8 @@ func (s *Service) Default(ctx context.Context, kind Kind) (*Provider, error) {
 		for _, record := range enabled {
 			names = append(names, record.Name)
 		}
-		return nil, fmt.Errorf(
-			"provider: several %s providers are enabled (%s); name the one to use",
-			kind, strings.Join(names, ", "))
+		return nil, fmt.Errorf("%w: several %s providers are enabled (%s); name the one to use",
+			ErrNotConfigured, kind, strings.Join(names, ", "))
 	}
 }
 

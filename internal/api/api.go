@@ -27,6 +27,7 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/jobs"
 	"github.com/AhsokaTano26/NikuCooker/internal/pipeline"
 	"github.com/AhsokaTano26/NikuCooker/internal/project"
+	"github.com/AhsokaTano26/NikuCooker/internal/provider"
 	"github.com/AhsokaTano26/NikuCooker/internal/segments"
 )
 
@@ -101,6 +102,21 @@ func (s *Server) buildRoutes() *http.ServeMux {
 
 	mux.HandleFunc("GET /api/v1/projects/{id}/segments", s.listSegments)
 	mux.HandleFunc("GET /api/v1/projects/{id}/segments/{segmentID}", s.getSegment)
+	mux.HandleFunc("PUT /api/v1/projects/{id}/segments/{segmentID}", s.updateSegment)
+	mux.HandleFunc("POST /api/v1/projects/{id}/segments/{segmentID}/review", s.reviewSegment)
+	mux.HandleFunc("POST /api/v1/projects/{id}/segments/{segmentID}/split", s.splitSegment)
+	mux.HandleFunc("POST /api/v1/projects/{id}/segments/{segmentID}/merge", s.mergeSegment)
+	mux.HandleFunc("POST /api/v1/projects/{id}/segments/{segmentID}/translate", s.translateSegment)
+
+	// The current lines as a subtitle file, generated from the table rather
+	// than from an artifact — so it includes edits the user has not re-run the
+	// pipeline for.
+	//
+	// Two routes rather than one with a wildcard suffix: a Go pattern's wildcard
+	// must be a whole path segment, and "subtitles.{format}" is not one. The
+	// file extension in the URL is worth two lines of registration.
+	mux.HandleFunc("GET /api/v1/projects/{id}/subtitles.srt", s.downloadSRT)
+	mux.HandleFunc("GET /api/v1/projects/{id}/subtitles.ass", s.downloadASS)
 
 	mux.HandleFunc("GET /api/v1/projects/{id}/qc", s.listFindings)
 	mux.HandleFunc("PATCH /api/v1/projects/{id}/qc/{findingID}", s.resolveFinding)
@@ -231,12 +247,22 @@ func classify(err error) *Error {
 		return NotFound("project")
 	case errors.Is(err, segments.ErrNotFound):
 		return NotFound("segment")
+	case errors.Is(err, segments.ErrInvalid):
+		// A request the user can fix. The repository's message is written to be
+		// read by them, so it is passed through rather than replaced.
+		return Invalid(strings.TrimPrefix(err.Error(), "segments: invalid: "))
 	case errors.Is(err, glossary.ErrNotFound):
 		return NotFound("glossary entry")
 	case errors.Is(err, jobs.ErrNotFound):
 		return NotFound("job")
 	case errors.Is(err, jobs.ErrAlreadyRunning):
 		return conflict(CodeAlreadyRun, "this project is already running")
+	case errors.Is(err, provider.ErrNotConfigured):
+		// A configuration problem the user can fix, and the message names what
+		// to set. Reporting it as a 500 would send them looking at the server
+		// rather than at their settings.
+		return Failed(http.StatusPreconditionFailed, CodeUnavailable,
+			strings.TrimPrefix(err.Error(), "provider: "))
 	case errors.Is(err, context.Canceled):
 		return Failed(http.StatusRequestTimeout, CodeInvalid, "the request was cancelled")
 	}

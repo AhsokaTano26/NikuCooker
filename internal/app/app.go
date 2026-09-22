@@ -247,6 +247,20 @@ func (a *App) DataDir() string { return a.dataDir }
 // Registry returns the pipeline definition.
 func (a *App) Registry() *stage.Registry { return a.registry }
 
+// stageServices are the collaborators every stage is handed.
+//
+// Built in one place so that the runs started by the CLI, by the API and by a
+// test all hand stages exactly the same set — a stage that worked from the CLI
+// and not from the browser would otherwise be a difference nobody declared.
+func (a *App) stageServices() stage.Services {
+	return stage.Services{
+		Providers:   a.Providers,
+		Glossary:    a.Glossary,
+		Translation: a.Cache,
+		Lines:       a.Segments,
+	}
+}
+
 // ResolvePython reports the interpreter the worker will be launched with.
 //
 // Exposed for the doctor command and the dashboard, which both need to answer
