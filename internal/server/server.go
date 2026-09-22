@@ -31,6 +31,15 @@ type Options struct {
 	// Version and Commit are reported by the system endpoint.
 	Version string
 	Commit  string
+
+	// RequestShutdown ends the process, on behalf of the interface.
+	//
+	// A function rather than a signal: the only thing the caller can do with it
+	// is what the OS signal already does, which is to cancel the context
+	// ListenAndServe was given. Left nil, the endpoint reports that the server
+	// cannot be stopped from here — which is the truth for an embedded server
+	// and for a test.
+	RequestShutdown func()
 }
 
 // Server is the running HTTP surface.
@@ -59,10 +68,11 @@ func New(opts Options) (*Server, error) {
 	// unrouted path under /api/v1 gets the API's JSON 404 rather than the
 	// web application's HTML — which a JSON client would have to guess about.
 	api, err := api.New(api.Options{
-		App:     opts.App,
-		Log:     opts.Log,
-		Version: opts.Version,
-		Commit:  opts.Commit,
+		App:             opts.App,
+		Log:             opts.Log,
+		Version:         opts.Version,
+		Commit:          opts.Commit,
+		RequestShutdown: opts.RequestShutdown,
 	})
 	if err != nil {
 		return nil, err
@@ -117,6 +127,20 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 	}
+
+	// The event stream is severed before waiting, not by the wait.
+	//
+	// Shutdown waits for in-flight requests but does not cancel their contexts,
+	// and this server has no write deadline because the event stream is a
+	// long-lived response. An open browser therefore holds a connection that
+	// will never end on its own, and Shutdown spends its entire timeout waiting
+	// for one that the shutdown itself would have to close. Closing the
+	// subscriptions first turns a ten-second exit into an immediate one.
+	//
+	// It costs nothing on the way out: the bus is not left in a closed state —
+	// a subscription made afterwards still works — and the process is about to
+	// stop anyway.
+	s.opts.App.Events.Close()
 
 	// Shutdown waits for in-flight requests, which is what lets a running
 	// render finish rather than being severed mid-write.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -32,6 +33,21 @@ install or point at. The API lives under /api/v1 on the same origin.`,
 			}
 			defer func() { _ = application.Close() }()
 
+			// Cancelled by either an interrupt or a termination signal, so that
+			// `docker stop` and Ctrl-C behave identically.
+			signalCtx, stopSignals := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stopSignals()
+
+			// Cancellable from inside the process as well as from outside it.
+			//
+			// stopSignals does not cancel anything — it only stops the signal
+			// handler — so being able to end the process from the interface
+			// needs a context of our own to cancel. Everything downstream sees
+			// the same shutdown either way: ListenAndServe returns, maintenance
+			// stops, the worker pool and the database close.
+			ctx, cancel := context.WithCancel(signalCtx)
+			defer cancel()
+
 			srv, err := server.New(server.Options{
 				Host:    host,
 				Port:    port,
@@ -39,15 +55,13 @@ install or point at. The API lives under /api/v1 on the same origin.`,
 				App:     application,
 				Version: currentVersion().Version,
 				Commit:  currentVersion().Commit,
+
+				// The one handle the web interface has on this process.
+				RequestShutdown: cancel,
 			})
 			if err != nil {
 				return err
 			}
-
-			// Cancelled by either an interrupt or a termination signal, so that
-			// `docker stop` and Ctrl-C behave identically.
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
 
 			// Started here rather than in the application, because a
 			// `nikucooker run` must not decide on its way past that some other

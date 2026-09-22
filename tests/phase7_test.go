@@ -56,6 +56,15 @@ type apiHarness struct {
 
 func newAPIHarness(t *testing.T) *apiHarness {
 	t.Helper()
+	return newAPIHarnessWith(t, nil)
+}
+
+// newAPIHarnessWith builds the harness with the API's options adjusted.
+//
+// The default harness leaves RequestShutdown unset, which is what an embedded
+// server does too. A test that needs the handle passes one here.
+func newAPIHarnessWith(t *testing.T, tweak func(*api.Options)) *apiHarness {
+	t.Helper()
 
 	dataDir := t.TempDir()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -76,9 +85,12 @@ func newAPIHarness(t *testing.T) *apiHarness {
 	}
 	t.Cleanup(func() { _ = application.Close() })
 
-	handler, err := api.New(api.Options{
-		App: application, Log: log, Version: "test", Commit: "test",
-	})
+	options := api.Options{App: application, Log: log, Version: "test", Commit: "test"}
+	if tweak != nil {
+		tweak(&options)
+	}
+
+	handler, err := api.New(options)
 	if err != nil {
 		t.Fatalf("api.New: %v", err)
 	}
@@ -1083,4 +1095,64 @@ func TestPhase7ATruncatedProviderReplyIsNotAFailure(t *testing.T) {
 		t.Errorf("max_tokens = %d, want at least %d: a model that reasons before it "+
 			"answers cannot reply inside a smaller budget", got, provider.ReasoningTokenFloor)
 	}
+}
+
+// The interface can stop the process, and says so when it cannot.
+//
+// Both halves matter. The endpoint exists so that a user who is looking at the
+// interface does not have to find the terminal to leave it. But an embedded
+// server and every test in this file build the API without a shutdown handle,
+// and an endpoint that claimed success there would be reporting something it
+// has no way to do — a button that says the server stopped, over a server that
+// is still running.
+func TestPhase7ShutdownEndpoint(t *testing.T) {
+	t.Run("without a handle it refuses", func(t *testing.T) {
+		h := newAPIHarness(t)
+
+		status, body, raw := h.request(http.MethodPost, "/api/v1/system/shutdown", nil)
+
+		if status != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503: %s", status, raw)
+		}
+		if code := errorCode(body); code != "UNAVAILABLE" {
+			t.Errorf("code = %q, want UNAVAILABLE: %s", code, raw)
+		}
+	})
+
+	t.Run("with a handle it answers, then stops", func(t *testing.T) {
+		// Recorded rather than acted on: cancelling a context here would take
+		// down the test runner's own server.
+		called := make(chan struct{}, 4)
+
+		h := newAPIHarnessWith(t, func(o *api.Options) {
+			o.RequestShutdown = func() { called <- struct{}{} }
+		})
+
+		status, body, raw := h.request(http.MethodPost, "/api/v1/system/shutdown", nil)
+
+		// Accepted, not OK: the server has agreed to stop and has not stopped
+		// yet. The request that asks for a shutdown is a request the shutdown
+		// itself will interrupt.
+		if status != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202: %s", status, raw)
+		}
+		if got, _ := body["status"].(string); got != "shutting_down" {
+			t.Errorf("status field = %q, want shutting_down: %s", got, raw)
+		}
+
+		// The answer arrives first and the stopping comes after it, which is
+		// why this waits rather than asserting straight away.
+		select {
+		case <-called:
+		case <-time.After(2 * time.Second):
+			t.Fatal("the shutdown handle was never called")
+		}
+
+		// Once, not once per attempt at the handler.
+		select {
+		case <-called:
+			t.Error("the shutdown handle was called more than once")
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
 }

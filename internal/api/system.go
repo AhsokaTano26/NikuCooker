@@ -45,6 +45,38 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, http.StatusOK, overview)
 }
 
+// shutdownDelay is how long the shutdown waits after answering the request.
+//
+// Long enough for the response to reach the browser, short enough that nobody
+// notices it. The alternative is closing the connection the caller is reading
+// the answer on, which turns a clean stop into a broken pipe.
+const shutdownDelay = 250 * time.Millisecond
+
+// requestProcessShutdown ends this process, at the interface's request.
+//
+// It answers before it stops. The caller is the browser that asked, and the
+// answer is the only evidence it gets that the button worked — the connection
+// is about to go away, along with every other one.
+func (s *Server) requestProcessShutdown(w http.ResponseWriter, r *http.Request) {
+	if s.requestShutdown == nil {
+		s.fail(w, Failed(http.StatusServiceUnavailable, CodeUnavailable,
+			"this server cannot be stopped from the interface; stop the process instead"))
+		return
+	}
+
+	s.log.Info("shutdown requested through the interface",
+		"remote_addr", r.RemoteAddr, "user_agent", r.UserAgent())
+
+	s.respond(w, http.StatusAccepted, map[string]string{"status": "shutting_down"})
+
+	// In a goroutine, because the shutdown it triggers is what ends the request
+	// that is still being written.
+	go func() {
+		time.Sleep(shutdownDelay)
+		s.requestShutdown()
+	}()
+}
+
 func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 	// Deliberately shallow. A health check that touches the database turns a
 	// moment of lock contention into a failed liveness probe, which restarts a

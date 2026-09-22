@@ -41,6 +41,12 @@ type Options struct {
 	// Version and Commit are reported by the system endpoint.
 	Version string
 	Commit  string
+
+	// RequestShutdown ends the process when the interface asks it to.
+	//
+	// Nil when there is no process to end — an embedded server, or a test —
+	// and the endpoint says so rather than pretending to have done it.
+	RequestShutdown func()
 }
 
 // Server holds the routing table.
@@ -54,6 +60,8 @@ type Server struct {
 
 	version string
 	commit  string
+
+	requestShutdown func()
 }
 
 // New builds the API and returns its handler.
@@ -66,10 +74,11 @@ func New(opts Options) (*Server, error) {
 	}
 
 	server := &Server{
-		app:     opts.App,
-		log:     opts.Log,
-		version: opts.Version,
-		commit:  opts.Commit,
+		app:             opts.App,
+		log:             opts.Log,
+		version:         opts.Version,
+		commit:          opts.Commit,
+		requestShutdown: opts.RequestShutdown,
 	}
 	server.mux = server.buildRoutes()
 	return server, nil
@@ -87,6 +96,7 @@ func (s *Server) buildRoutes() *http.ServeMux {
 	// without a handler having to check.
 	mux.HandleFunc("GET /api/v1/system", s.getSystem)
 	mux.HandleFunc("GET /api/v1/system/health", s.getHealth)
+	mux.HandleFunc("POST /api/v1/system/shutdown", s.requestProcessShutdown)
 	mux.HandleFunc("GET /api/v1/events", s.getEvents)
 
 	mux.HandleFunc("POST /api/v1/uploads", s.createUpload)
