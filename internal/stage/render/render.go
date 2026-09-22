@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/config"
 	"github.com/AhsokaTano26/NikuCooker/internal/media"
@@ -73,7 +74,7 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 		return nil, fmt.Errorf("render: %w", err)
 	}
 
-	outputName, err := outputName(env.SourcePath, info.HasVideo())
+	outputName, err := outputName(env.Project.Name, info.HasVideo())
 	if err != nil {
 		return nil, err
 	}
@@ -210,9 +211,12 @@ func (s *Stage) options(ctx context.Context, env *stage.Env, mode media.RenderMo
 
 // outputName builds the rendered file's name.
 //
-// The suffix is derived from the mode, so that a project rendered both ways
-// keeps both files rather than the second silently replacing the first.
-func outputName(sourcePath string, hasVideo bool) (string, error) {
+// Named after the project rather than the file on disk. The source is stored
+// under a fixed name — "source.mp4", whatever it was called when it arrived —
+// so deriving the output from it would give every project in the data
+// directory the same output filename, and a user who exported two of them
+// would have two files called source.nikucooker.mkv.
+func outputName(projectName string, hasVideo bool) (string, error) {
 	if !hasVideo {
 		// An audio-only source cannot be rendered as video, and the caller has
 		// already refused. This exists so that the name is never built from an
@@ -220,14 +224,28 @@ func outputName(sourcePath string, hasVideo bool) (string, error) {
 		return "", errors.New("render: the source has no video stream")
 	}
 
-	base := trimExtension(filepath.Base(sourcePath))
+	base := sanitiseFilename(projectName)
 	if base == "" {
-		return "", fmt.Errorf("render: cannot derive an output name from %q", sourcePath)
+		base = "nikucooker"
 	}
 
 	// Matroska, because it is the container that carries ASS styling natively
 	// and accepts any codec. Writing MP4 would silently drop the styling.
 	return base + ".nikucooker.mkv", nil
+}
+
+// sanitiseFilename removes what cannot appear in a filename.
+//
+// The project name is free text a user typed, and it reaches a path. Removing
+// the separators and the reserved characters is what keeps a project called
+// "../../etc/passwd" from being a path rather than a name.
+func sanitiseFilename(name string) string {
+	replacer := strings.NewReplacer(
+		"/", "_", "\\", "_", ":", "_", "*", "_",
+		"?", "_", "\"", "_", "<", "_", ">", "_", "|", "_",
+		"\n", "_", "\r", "_",
+	)
+	return strings.TrimSpace(replacer.Replace(strings.TrimSpace(name)))
 }
 
 // pickSubtitle chooses which subtitle file to use.
@@ -265,11 +283,6 @@ func fileFormatFor(extension string) string {
 	default:
 		return "srt"
 	}
-}
-
-// trimExtension removes the final extension from a filename.
-func trimExtension(name string) string {
-	return name[:len(name)-len(filepath.Ext(name))]
 }
 
 // iso639_2 maps a BCP-47 tag to the two-letter code Matroska expects.
