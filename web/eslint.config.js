@@ -29,6 +29,11 @@ const browserGlobals = {
   setInterval: 'readonly',
   clearInterval: 'readonly',
   queueMicrotask: 'readonly',
+  // The DOM constructors the views narrow to. Only ones actually used, so
+  // the list stays short enough to read.
+  HTMLTextAreaElement: 'readonly',
+  HTMLInputElement: 'readonly',
+  HTMLElement: 'readonly',
   confirm: 'readonly',
   alert: 'readonly',
   requestAnimationFrame: 'readonly',
