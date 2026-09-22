@@ -978,6 +978,174 @@ func TestPhase5ContextDocumentReachesThePrompt(t *testing.T) {
 	}
 }
 
+// isAnalysisRequest distinguishes the analysis pass from a translation batch.
+//
+// There is no marker for it in the request: both go to the same endpoint, and
+// both ask for JSON. What tells them apart is the instruction, which is the
+// whole reason the analysis stage exists as a separate prompt.
+func isAnalysisRequest(req recordedRequest) bool {
+	return strings.Contains(req.User, "You are preparing to translate")
+}
+
+// analysisRequests returns the analysis pass's requests, in order.
+func analysisRequests(h *phase5Harness) []recordedRequest {
+	var out []recordedRequest
+	for _, request := range h.llm.all() {
+		if isAnalysisRequest(request) {
+			out = append(out, request)
+		}
+	}
+	return out
+}
+
+// runPipeline executes the pipeline and reports how each stage ended.
+//
+// Unlike run, it does not fail the test when a stage fails: the tests below are
+// about a stage failing on purpose, and a helper that called t.Fatal on the way
+// past would make them untestable.
+func runPipeline(t *testing.T, h *phase5Harness) (map[string]pipeline.State, error) {
+	t.Helper()
+
+	ctx := context.Background()
+	opts := h.options(false)
+
+	plan, err := pipeline.Build(ctx, opts)
+	if err != nil {
+		t.Fatalf("pipeline.Build: %v", err)
+	}
+
+	runErr := pipeline.Run(ctx, plan, opts, pipeline.NopObserver{})
+
+	states := map[string]pipeline.State{}
+	for _, sp := range plan.Stages {
+		states[sp.Stage.Spec().Name] = sp.State
+	}
+	return states, runErr
+}
+
+// An analysis reply that cannot be read is asked for again, with the parser's
+// complaint attached.
+//
+// This is a measured failure, not a hypothetical one: a model closed an array
+// with a brace — `"terms": [{…} }` — which survives the brace matcher and is
+// rejected by the decoder. Nothing about that reply is recoverable, so there is
+// no partial document to salvage; what makes it worth retrying rather than
+// aborting is that the run it interrupts has already paid for transcription and
+// segmentation, and the model fixes the mistake when it is told about it.
+func TestPhase5RetriesAnUnreadableAnalysis(t *testing.T) {
+	h := newPhase5Harness(t)
+	h.registerContext()
+
+	h.llm.reply = func(attempt int, req recordedRequest) (int, string) {
+		if !isAnalysisRequest(req) {
+			return 0, ""
+		}
+		if attempt > 1 {
+			return 0, envelope(analysisContent())
+		}
+		return 0, envelope(`{"summary":"x","terms":[{"source":"a","target":"b"} }`)
+	}
+
+	states, err := runPipeline(t, h)
+	if err != nil {
+		t.Fatalf("pipeline.Run: %v", err)
+	}
+	if states["context"] != pipeline.StateCompleted {
+		t.Fatalf("context ended in state %s, want completed", states["context"])
+	}
+
+	requests := analysisRequests(h)
+	if len(requests) != 2 {
+		t.Fatalf("the analysis was requested %d times, want 2", len(requests))
+	}
+
+	// The retry has to be a *different* request. Sending the same prompt again
+	// and hoping is not a retry, it is a coin flip.
+	retry := requests[1].User
+
+	if !strings.Contains(retry, "## Correction") {
+		t.Error("the retry carried no correction")
+	}
+	// The parser's own words, so the model is told which bracket was wrong
+	// rather than asked again to be careful.
+	if !strings.Contains(retry, "after array element") {
+		t.Errorf("the correction does not say what the parser objected to:\n%s", retry)
+	}
+	// Built from the original prompt rather than from the attempt before it, so
+	// the transcript survives the correction.
+	if !strings.Contains(retry, "こんにちは") {
+		t.Error("the retry lost the transcript")
+	}
+	if strings.Count(retry, "## Correction") != 1 {
+		t.Error("the retry carries more than one correction")
+	}
+}
+
+// A model that cannot produce a readable analysis is given up on, and what it
+// said is written down.
+//
+// Two failures are being guarded against, and the second is the one that
+// actually happened. Retrying forever would spend a run on a provider that is
+// not going to answer. Reporting only the parser's error — "not an analysis
+// document: invalid character '}' after array element" — leaves the reply
+// itself unreadable, which makes a model's typo indistinguishable from a bug in
+// the parser, and it took reading the model's own output to tell them apart.
+func TestPhase5GivesUpOnAnUnreadableAnalysis(t *testing.T) {
+	h := newPhase5Harness(t)
+	h.registerContext()
+
+	// The stage logs at warn, and the harness's logger is configured to drop
+	// anything below error — which is right for every other test in this file
+	// and wrong for this one.
+	var logs strings.Builder
+	h.log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	h.llm.reply = func(_ int, req recordedRequest) (int, string) {
+		if !isAnalysisRequest(req) {
+			return 0, ""
+		}
+		return 0, envelope(`{"summary":"x","terms":[{"source":"a"} }`)
+	}
+
+	states, _ := runPipeline(t, h)
+
+	if states["context"] != pipeline.StateFailed {
+		t.Errorf("context ended in state %s, want failed", states["context"])
+	}
+
+	// And the rest of the pipeline ran anyway. The analysis is an optional
+	// dependency of translation, so a failure here costs the translation its
+	// context and nothing else — which is the difference between a run that
+	// produces subtitles without the analysis and a run that produces nothing.
+	// This is not incidental: it is what the stage's Optional flag and the
+	// translation prompt's "no context was available" path are for.
+	if states["translation"] != pipeline.StateCompleted && states["translation"] != pipeline.StateCached {
+		t.Errorf("translation ended in state %s, want completed or cached", states["translation"])
+	}
+
+	// Bounded. The exact number is a judgement about how many attempts a typo
+	// is worth; that there is one at all is the property under test.
+	if got := len(analysisRequests(h)); got != 3 {
+		t.Errorf("the analysis was requested %d times, want 3 and no more", got)
+	}
+
+	// The reply made it to the log, which is the only place it can be read.
+	if !strings.Contains(logs.String(), "source") {
+		t.Errorf("the unusable reply was not logged:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "could not be read") {
+		t.Errorf("the failure was not logged:\n%s", logs.String())
+	}
+
+	// And the stage failing is itself in the log, rather than only in the
+	// plan's state. A log that ends where the stage went wrong reads as a run
+	// that stopped mid-sentence, and the reason is exactly what it is opened to
+	// find.
+	if !strings.Contains(logs.String(), "stage failed") {
+		t.Errorf("the stage failure was not logged:\n%s", logs.String())
+	}
+}
+
 // A single-endpoint setup must work without a database record.
 //
 // The configuration documents base_url and model as a fallback for exactly this

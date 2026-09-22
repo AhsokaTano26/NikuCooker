@@ -23,6 +23,7 @@ import (
 
 	"github.com/AhsokaTano26/NikuCooker/internal/analysis"
 	"github.com/AhsokaTano26/NikuCooker/internal/config"
+	"github.com/AhsokaTano26/NikuCooker/internal/llmjson"
 	"github.com/AhsokaTano26/NikuCooker/internal/provider"
 	"github.com/AhsokaTano26/NikuCooker/internal/stage"
 	"github.com/AhsokaTano26/NikuCooker/internal/subtitle"
@@ -45,6 +46,25 @@ const (
 	maxSampleLines = 400
 	maxSampleChars = 24000
 )
+
+// maxAttempts is how many times the analysis may be asked for.
+//
+// One attempt is not enough for a request whose reply has to be well-formed
+// JSON. The failure that prompted this was an array closed with a brace —
+// `"terms": [{…} }` — which is not a mistake the model repeats: shown the
+// parser's complaint, it fixes it. Three, the same number the translation pass
+// arrived at from the same observation: the second attempt almost always
+// succeeds, and the third exists so that one unlucky retry does not lose a run
+// that has already paid for the segmentation it is analysing.
+const maxAttempts = 3
+
+// maxLoggedReply bounds how much of an unusable reply is written to the log.
+//
+// The whole reply is what is actually useful — this stage once failed with a
+// parser's complaint about a reply nobody could see, which made an intermittent
+// model error look like a bug in the parser. The bound keeps one bad reply from
+// filling a run's log by itself; a reply shorter than it is logged complete.
+const maxLoggedReply = 1500
 
 // Stage produces the context document.
 type Stage struct{}
@@ -114,50 +134,89 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 
 	env.ReportProgress(0.1, "reading the transcript")
 
-	reply, err := client.Chat(ctx, provider.ChatRequest{
-		User: mustRender(template, map[string]string{
-			"Transcript": renderTranscript(sampled),
-		}),
-		// Low but not zero. The analysis is a description, and a little
-		// variation costs nothing; a temperature of zero makes some providers
-		// slow and others refuse the request outright.
-		Temperature: 0.2,
-
-		// Sized for the reasoning, not for the answer.
-		//
-		// The document this stage asks for is a few hundred tokens. A model
-		// that thinks before it answers spends several thousand doing it, and
-		// those tokens come out of the same budget — measured on an eleven-line
-		// transcript, 2934 completion tokens went out for a description of
-		// about 600. A ceiling set to fit the answer alone truncates, and it
-		// truncates intermittently, because how long a model deliberates varies
-		// between runs of the same input.
-		//
-		// A ceiling is not a target: an unused one costs nothing.
-		MaxTokens: 8192,
-
-		// Asked for explicitly, because the default is not neutral on the
-		// models that have this. DeepSeek's, for one, defaults to high, and it
-		// is the difference between spending 3446 tokens on this and 2934.
-		//
-		// That is a real saving and not a fix on its own — the ceiling above is
-		// what makes it safe. Low rather than off: some deliberation helps fix a
-		// reading of an ambiguous name, and the OpenAI-compatible surface does
-		// not offer "off" anyway.
-		ReasoningEffort: "low",
-
-		JSON: true,
+	base := mustRender(template, map[string]string{
+		"Transcript": renderTranscript(sampled),
 	})
-	if err != nil {
-		return nil, fmt.Errorf("context: %w", err)
+	user := base
+
+	var (
+		reply    *provider.ChatResponse
+		document *analysis.Document
+	)
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		var err error
+
+		reply, err = client.Chat(ctx, provider.ChatRequest{
+			User: user,
+			// Low but not zero. The analysis is a description, and a little
+			// variation costs nothing; a temperature of zero makes some providers
+			// slow and others refuse the request outright.
+			Temperature: 0.2,
+
+			// Sized for the reasoning, not for the answer.
+			//
+			// The document this stage asks for is a few hundred tokens. A model
+			// that thinks before it answers spends several thousand doing it, and
+			// those tokens come out of the same budget — measured on an eleven-line
+			// transcript, 2934 completion tokens went out for a description of
+			// about 600. A ceiling set to fit the answer alone truncates, and it
+			// truncates intermittently, because how long a model deliberates varies
+			// between runs of the same input.
+			//
+			// A ceiling is not a target: an unused one costs nothing.
+			MaxTokens: 8192,
+
+			// Asked for explicitly, because the default is not neutral on the
+			// models that have this. DeepSeek's, for one, defaults to high, and it
+			// is the difference between spending 3446 tokens on this and 2934.
+			//
+			// That is a real saving and not a fix on its own — the ceiling above is
+			// what makes it safe. Low rather than off: some deliberation helps fix a
+			// reading of an ambiguous name, and the OpenAI-compatible surface does
+			// not offer "off" anyway.
+			ReasoningEffort: "low",
+
+			JSON: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("context: %w", err)
+		}
+
+		env.ReportProgress(0.8, "reading the analysis")
+
+		document, err = analysis.Parse(reply.Content)
+		if err == nil {
+			break
+		}
+
+		// What the model actually said, not only what the parser made of it.
+		//
+		// A parse failure is the one kind of failure whose cause is entirely in
+		// the reply, and reporting the error alone makes it unreadable: the same
+		// symptom fits a broken parser and a model that closed an array with a
+		// brace, and there is no way to tell which from the message.
+		env.Log.Warn("the analysis could not be read",
+			"attempt", attempt,
+			"error", err,
+			"reply_bytes", len(reply.Content),
+			"reply", llmjson.Truncate(reply.Content, maxLoggedReply))
+
+		if attempt == maxAttempts {
+			return nil, fmt.Errorf("context: %w", err)
+		}
+
+		env.ReportProgress(0.1, "asking again")
+
+		// Rebuilt from base rather than appended to the last attempt, so that a
+		// third attempt carries one correction rather than two.
+		user = base + correction(err)
 	}
 
-	env.ReportProgress(0.8, "reading the analysis")
-
-	document, err := analysis.Parse(reply.Content)
-	if err != nil {
-		return nil, fmt.Errorf("context: %w", err)
-	}
 	document.Model = reply.Model
 	if document.Model == "" {
 		document.Model = client.Model()
@@ -186,6 +245,22 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 			"completion_tokens": reply.CompletionTokens,
 		},
 	}, nil
+}
+
+// correction tells the model what was wrong with its previous reply.
+//
+// The instruction is specific rather than a restatement of the prompt, because
+// the prompt already says "JSON only" and the model already ignored it. Naming
+// the bracket that was wrong is what makes the retry a different request rather
+// than the same one again.
+func correction(err error) string {
+	return "\n\n## Correction\n\n" +
+		"Your previous reply could not be read as JSON. The parser reported:\n\n" +
+		"    " + err.Error() + "\n\n" +
+		"Reply again with the same analysis, as one JSON object and nothing else. " +
+		"Check that every array is closed with ] and every object with }, that " +
+		"neither has a comma after its last item, and that any quotation mark " +
+		"inside a string is escaped."
 }
 
 // sample picks lines to analyse, evenly across the whole work.
