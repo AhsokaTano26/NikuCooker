@@ -13,6 +13,7 @@ import (
 
 	"github.com/AhsokaTano26/NikuCooker/internal/app"
 	"github.com/AhsokaTano26/NikuCooker/internal/media"
+	"github.com/AhsokaTano26/NikuCooker/internal/models"
 	"github.com/AhsokaTano26/NikuCooker/internal/platform"
 )
 
@@ -328,12 +329,21 @@ func checkModels(ctx context.Context, app *app.App) check {
 	}
 
 	for _, model := range installed {
-		if model.Name == wanted || model.ID == "asr:"+wanted {
-			return check{
-				Name:   "models",
-				Status: "ok",
-				Detail: fmt.Sprintf("%s is installed", wanted),
-			}
+		if model.Name != wanted && model.ID != "asr:"+wanted {
+			continue
+		}
+
+		// The row exists for every model this build knows about, whether or not
+		// it was ever downloaded, so its presence says nothing. Only the status
+		// does — and it is derived from the files on disk, which is the fact
+		// this check exists to report.
+		if model.Status != models.StatusReady {
+			break
+		}
+		return check{
+			Name:   "models",
+			Status: "ok",
+			Detail: fmt.Sprintf("%s is installed", wanted),
 		}
 	}
 

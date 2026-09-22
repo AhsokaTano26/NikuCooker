@@ -525,6 +525,16 @@ func resolveAIDir(cfg *config.Config) (string, error) {
 		if dir, ok := check(filepath.Join(cwd, "ai")); ok {
 			return dir, nil
 		}
+		// The working directory itself, for a layout where ai/ is not a
+		// subdirectory of it but *is* it — which is what the container has, and
+		// what running this from inside a checkout's ai/ directory has.
+		//
+		// Checked last so the checkout keeps resolving the way it always has:
+		// from the repository root, ai/ is the subdirectory, and a bare cwd
+		// there holds no package to find.
+		if dir, ok := check(cwd); ok {
+			return dir, nil
+		}
 	}
 
 	return "", fmt.Errorf(
