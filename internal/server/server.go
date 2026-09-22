@@ -40,6 +40,18 @@ type Options struct {
 	// cannot be stopped from here — which is the truth for an embedded server
 	// and for a test.
 	RequestShutdown func()
+
+	// OnListening is called once the socket is bound and requests are being
+	// served, with the address that was actually bound.
+	//
+	// It exists so that a caller can announce a server that is genuinely up.
+	// Anything done before ListenAndServe returns is done before the listener
+	// exists — a message saying "serving at" printed there is a claim the
+	// process has not yet earned, and a browser opened there may reach a port
+	// with nothing behind it.
+	//
+	// Called from the goroutine running ListenAndServe, so it must not block.
+	OnListening func(addr string)
 }
 
 // Server is the running HTTP surface.
@@ -121,6 +133,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
+
+	if s.opts.OnListening != nil {
+		s.opts.OnListening(ln.Addr().String())
+	}
 
 	select {
 	case err := <-errCh:

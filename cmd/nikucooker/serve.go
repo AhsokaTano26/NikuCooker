@@ -2,20 +2,24 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
+	"github.com/AhsokaTano26/NikuCooker/internal/platform"
 	"github.com/AhsokaTano26/NikuCooker/internal/server"
 )
 
 func newServeCmd(g *globals) *cobra.Command {
 	var (
-		host string
-		port int
+		host     string
+		port     int
+		openPage bool
 	)
 
 	cmd := &cobra.Command{
@@ -58,6 +62,39 @@ install or point at. The API lives under /api/v1 on the same origin.`,
 
 				// The one handle the web interface has on this process.
 				RequestShutdown: cancel,
+
+				// Everything that should happen only once the server is
+				// genuinely up. Both of these were done before ListenAndServe
+				// was called, which is before the port was bound — so a port
+				// already in use printed "serving at" and then failed, and a
+				// browser opened there had nothing to reach.
+				OnListening: func(bound string) {
+					url := "http://" + browsableAddr(bound)
+
+					application.Logger().Info("listening",
+						"addr", bound, "version", currentVersion().Version)
+					fmt.Fprintf(cmd.OutOrStdout(), "NikuCooker is serving at %s\n", url)
+
+					if !openPage {
+						return
+					}
+
+					err := platform.OpenBrowser(cmd.Context(), url)
+					switch {
+					case err == nil:
+						application.Logger().Info("opened the control page in a browser", "url", url)
+					case errors.Is(err, platform.ErrNoOpener):
+						// Expected wherever there is no desktop — a container,
+						// a build machine, a shell on a server somewhere. It is
+						// not a problem and it has no fix, so it is not
+						// reported as one.
+						application.Logger().Debug("no browser to open the control page in",
+							"url", url)
+					default:
+						application.Logger().Warn("could not open the control page",
+							"url", url, "error", err)
+					}
+				},
 			})
 			if err != nil {
 				return err
@@ -70,9 +107,6 @@ install or point at. The API lives under /api/v1 on the same origin.`,
 			stopMaintenance := application.StartMaintenance(ctx)
 			defer stopMaintenance()
 
-			application.Logger().Info("listening", "addr", srv.Addr(), "version", currentVersion().Version)
-			fmt.Fprintf(cmd.OutOrStdout(), "NikuCooker is serving at http://%s\n", displayAddr(host, port))
-
 			return srv.ListenAndServe(ctx)
 		},
 	}
@@ -80,16 +114,32 @@ install or point at. The API lives under /api/v1 on the same origin.`,
 	cmd.Flags().StringVar(&host, "host", "127.0.0.1",
 		"address to bind. The default is loopback: this build has no authentication")
 	cmd.Flags().IntVar(&port, "port", 8080, "port to bind")
+	// On by default, and harmless where it cannot work: a machine with no
+	// browser reports that it has none and the server carries on. Disable it
+	// with --open=false on a machine where the browser would open somewhere
+	// unhelpful, such as a remote shell with a forwarded display.
+	cmd.Flags().BoolVar(&openPage, "open", true,
+		"open the control page in a browser once the server is listening")
 
 	return cmd
 }
 
-// displayAddr renders the address as something a user can paste into a browser.
-func displayAddr(host string, port int) string {
+// browsableAddr turns the address a listener bound into one a browser can use.
+//
+// A listener bound to a wildcard address is reachable at localhost and not at
+// 0.0.0.0, which is not an address any browser will connect to. Taken from what
+// was actually bound rather than from the flags, so that a port of 0 — ask the
+// kernel — still produces the port the kernel chose.
+func browsableAddr(bound string) string {
+	host, port, err := net.SplitHostPort(bound)
+	if err != nil {
+		return bound
+	}
+
 	switch host {
 	case "0.0.0.0", "::", "":
-		return fmt.Sprintf("localhost:%d", port)
+		return net.JoinHostPort("localhost", port)
 	default:
-		return fmt.Sprintf("%s:%d", host, port)
+		return net.JoinHostPort(host, port)
 	}
 }
