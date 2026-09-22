@@ -177,16 +177,43 @@ func recordToEntry(group []slog.Attr, record slog.Record) Record {
 
 	attrs := map[string]any{}
 	for _, attr := range group {
-		attrs[attr.Key] = attr.Value.Any()
+		attrs[attr.Key] = attrValue(attr.Value)
 	}
 	record.Attrs(func(attr slog.Attr) bool {
-		attrs[attr.Key] = attr.Value.Any()
+		attrs[attr.Key] = attrValue(attr.Value)
 		return true
 	})
 	if len(attrs) > 0 {
 		entry.Attrs = attrs
 	}
 	return entry
+}
+
+// attrValue renders an attribute the way someone reading the log needs it,
+// rather than the way encoding/json happens to.
+//
+// The case that matters is an error. A line's most important attribute is
+// usually the reason it was written, and an error does not survive JSON:
+// encoding/json has no exported fields to write for the types errors are built
+// from, so `"error":{}` is what ends up in the record — an empty object exactly
+// where the explanation should be. A text handler special-cases this and prints
+// the message; a record that is stored and read back has to do it by hand.
+//
+// Groups are resolved for the same reason: their values are slog.Values with no
+// exported fields of their own, so a marshalled group is a list of keys mapped
+// to empty objects.
+func attrValue(value slog.Value) any {
+	if value.Kind() == slog.KindGroup {
+		group := map[string]any{}
+		for _, attr := range value.Group() {
+			group[attr.Key] = attrValue(attr.Value)
+		}
+		return group
+	}
+	if err, ok := value.Any().(error); ok {
+		return err.Error()
+	}
+	return value.Any()
 }
 
 // levelName renders a level the way the interface shows it.

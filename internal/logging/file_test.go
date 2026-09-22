@@ -2,6 +2,8 @@ package logging
 
 import (
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,6 +126,40 @@ func TestRunLogCloseIsIdempotent(t *testing.T) {
 	// Writing after the close is ignored rather than a panic.
 	if err := log.Write(Record{Msg: "after"}); err != nil {
 		t.Fatalf("Write after Close: %v", err)
+	}
+}
+
+// An error attribute survives the round trip through the file as its message.
+//
+// Without this the most important line a failed run writes — "stage failed",
+// carrying the reason — is stored as `"error":{}`. The failure is invisible
+// until someone opens the log to find out what went wrong, which is the one
+// moment the file exists for, and an empty object there is worse than no
+// attribute at all: it says the reason was recorded and it was not.
+func TestRunLogKeepsTheMessageOfAnError(t *testing.T) {
+	log, path := newRunLog(t, 1<<20)
+	logger := slog.New(NewFileHandler(log))
+
+	logger.Error("stage failed", "error", errors.New("probe: no such file"),
+		"stage", "probe")
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := readLines(t, path)
+	if len(lines) != 1 {
+		t.Fatalf("wrote %d records, want 1", len(lines))
+	}
+
+	got, ok := lines[0].Attrs["error"].(string)
+	if !ok {
+		t.Fatalf("error = %#v, want a string", lines[0].Attrs["error"])
+	}
+	if got != "probe: no such file" {
+		t.Errorf("error = %q, want the message", got)
+	}
+	if lines[0].Attrs["stage"] != "probe" {
+		t.Errorf("stage = %#v, want probe", lines[0].Attrs["stage"])
 	}
 }
 
