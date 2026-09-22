@@ -122,8 +122,31 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 		// variation costs nothing; a temperature of zero makes some providers
 		// slow and others refuse the request outright.
 		Temperature: 0.2,
-		MaxTokens:   4096,
-		JSON:        true,
+
+		// Sized for the reasoning, not for the answer.
+		//
+		// The document this stage asks for is a few hundred tokens. A model
+		// that thinks before it answers spends several thousand doing it, and
+		// those tokens come out of the same budget — measured on an eleven-line
+		// transcript, 2934 completion tokens went out for a description of
+		// about 600. A ceiling set to fit the answer alone truncates, and it
+		// truncates intermittently, because how long a model deliberates varies
+		// between runs of the same input.
+		//
+		// A ceiling is not a target: an unused one costs nothing.
+		MaxTokens: 8192,
+
+		// Asked for explicitly, because the default is not neutral on the
+		// models that have this. DeepSeek's, for one, defaults to high, and it
+		// is the difference between spending 3446 tokens on this and 2934.
+		//
+		// That is a real saving and not a fix on its own — the ceiling above is
+		// what makes it safe. Low rather than off: some deliberation helps fix a
+		// reading of an ambiguous name, and the OpenAI-compatible surface does
+		// not offer "off" anyway.
+		ReasoningEffort: "low",
+
+		JSON: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("context: %w", err)

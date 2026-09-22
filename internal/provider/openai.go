@@ -32,6 +32,16 @@ type ChatRequest struct {
 	// above their own ceiling.
 	MaxTokens int
 
+	// ReasoningEffort asks a model that thinks before answering to think less
+	// or more: "low", "medium", "high" or "max".
+	//
+	// The empty string omits the field and takes the endpoint's default, which
+	// for the models that support this is not a neutral choice. DeepSeek's
+	// defaults to high, and a thinking model's reasoning is charged to the same
+	// token budget as its answer — so a caller with a small answer to get
+	// sometimes finds the budget spent before the answer starts.
+	ReasoningEffort string
+
 	// JSON asks the server to constrain the response to a JSON object.
 	//
 	// It is a request, not a guarantee: the field is optional in the de facto
@@ -168,6 +178,11 @@ type compat struct {
 
 	// tokenField is the request field carrying the response limit.
 	tokenField string
+
+	// reasoningSet is false until the endpoint's answer is known, the same
+	// optimistic-then-corrected arrangement jsonMode uses.
+	reasoningSet bool
+	reasoning    bool
 }
 
 // NewClient builds a client for a provider record.
@@ -275,16 +290,18 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	// At most two corrections: one for the JSON-mode field and one for the token
-	// limit field. Bounding it here is what makes the loop terminate, since each
-	// correction is only ever applied once.
+	// One correction per negotiable field: the JSON-mode flag, the token limit
+	// field, and the reasoning effort. Bounding it here is what makes the loop
+	// terminate, since each correction is only ever applied once.
+	const maxCorrections = 3
 	corrections := 0
 
 	for {
 		jsonMode := c.jsonModeEnabled(req.JSON)
 		tokenField := c.tokenFieldName()
+		reasoning := c.reasoningEnabled(req.ReasoningEffort)
 
-		response, err := c.attempt(ctx, req, jsonMode, tokenField)
+		response, err := c.attempt(ctx, req, jsonMode, tokenField, reasoning)
 		if err == nil {
 			return response, nil
 		}
@@ -295,10 +312,13 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 		}
 
 		changed := false
-		if corrections < 2 {
+		if corrections < maxCorrections {
 			switch {
 			case jsonMode && mentions(apiErr, "response_format"):
 				c.disableJSONMode()
+				changed = true
+			case reasoning && mentions(apiErr, "reasoning_effort"):
+				c.disableReasoning()
 				changed = true
 			case tokenField == "max_tokens" && mentions(apiErr, "max_tokens"):
 				c.setTokenField("max_completion_tokens")
@@ -344,6 +364,32 @@ func (c *Client) disableJSONMode() {
 	c.compat.jsonMode = false
 }
 
+// reasoningEnabled reports whether to send reasoning_effort.
+//
+// Optimistic until the endpoint says otherwise, like the JSON-mode flag: an
+// endpoint that does not know the field usually ignores it, and one that
+// rejects it costs a single extra round trip the first time.
+func (c *Client) reasoningEnabled(wanted string) bool {
+	if wanted == "" {
+		return false
+	}
+
+	c.compat.mu.Lock()
+	defer c.compat.mu.Unlock()
+
+	if c.compat.reasoningSet {
+		return c.compat.reasoning
+	}
+	return true
+}
+
+func (c *Client) disableReasoning() {
+	c.compat.mu.Lock()
+	defer c.compat.mu.Unlock()
+	c.compat.reasoningSet = true
+	c.compat.reasoning = false
+}
+
 func (c *Client) tokenFieldName() string {
 	c.compat.mu.Lock()
 	defer c.compat.mu.Unlock()
@@ -370,6 +416,7 @@ func (c *Client) attempt(
 	req ChatRequest,
 	jsonMode bool,
 	tokenField string,
+	reasoning bool,
 ) (*ChatResponse, error) {
 	messages := make([]map[string]string, 0, 2)
 	if req.System != "" {
@@ -392,6 +439,9 @@ func (c *Client) attempt(
 	}
 	if jsonMode {
 		body["response_format"] = map[string]string{"type": "json_object"}
+	}
+	if reasoning && req.ReasoningEffort != "" {
+		body["reasoning_effort"] = req.ReasoningEffort
 	}
 
 	encoded, err := json.Marshal(body)
