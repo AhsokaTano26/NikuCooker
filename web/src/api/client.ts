@@ -226,16 +226,37 @@ export const segments = {
   update: (projectId: string, segmentId: string, body: UpdateSegmentBody): Promise<Segment> =>
     request(`/projects/${projectId}/segments/${segmentId}`, { method: 'PUT', body }),
 
-  split: (projectId: string, segmentId: string, at: number): Promise<Segment> =>
+  /** Both halves come back, because neither is "the" line afterwards. */
+  split: (projectId: string, segmentId: string, at: number): Promise<{ first: Segment; second: Segment }> =>
     request(`/projects/${projectId}/segments/${segmentId}/split`, {
       method: 'POST',
       body: { at },
     }),
 
-  merge: (projectId: string, segmentId: string, withNext = true): Promise<Segment> =>
+  merge: (
+    projectId: string,
+    segmentId: string,
+    withNext = true,
+  ): Promise<{ merged: Segment; absorbed: Segment }> =>
     request(`/projects/${projectId}/segments/${segmentId}/merge`, {
       method: 'POST',
       body: { with_next: withNext },
+    }),
+
+  /**
+   * A review decision, as distinct from an edit.
+   *
+   * Approving a line does not mark it hand-edited, so a later run is still free
+   * to improve a translation a reviewer merely accepted.
+   */
+  review: (
+    projectId: string,
+    segmentId: string,
+    reviewState: Segment['review_state'],
+  ): Promise<Segment> =>
+    request(`/projects/${projectId}/segments/${segmentId}/review`, {
+      method: 'POST',
+      body: { review_state: reviewState },
     }),
 
   /** Bypasses the translation cache by design: the user is asking for a

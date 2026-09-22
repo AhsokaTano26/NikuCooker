@@ -1,15 +1,298 @@
 <script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
-import PagePlaceholder from '@/components/PagePlaceholder.vue'
-import type { NavMeta } from '@/router'
+import { ApiError, api, API_BASE } from '@/api/client'
+import { formatDuration, useAsync } from '@/composables/useAsync'
+import { useEventStore, type ServerEvent } from '@/stores/events'
+import type { Segment } from '@/types/api'
 
-// Title, phase and description come from the route definition so there is one
-// source of truth for them. This file is replaced by the real view in the phase
-// its route meta names.
-const meta = useRoute().meta as unknown as NavMeta
+const route = useRoute()
+const events = useEventStore()
+const projectId = computed(() => String(route.params['id']))
+
+const lines = useAsync(() => api.segments.list(projectId.value, { limit: 500, include_qc: true }))
+
+/** Which line is open for editing. */
+const editingId = ref<string | null>(null)
+const draft = ref('')
+const saving = ref(false)
+const actionError = ref<string | null>(null)
+
+/** Filters that change what the list shows rather than what the server returns. */
+const onlyReview = ref(false)
+const search = ref('')
+
+const visible = computed(() => {
+  const items = lines.data.value?.items ?? []
+  const needle = search.value.trim()
+
+  return items.filter((line) => {
+    if (onlyReview.value && !line.needs_review) return false
+    if (needle === '') return true
+    return (
+      line.source_text.includes(needle) ||
+      (line.translated_text ?? '').includes(needle)
+    )
+  })
+})
+
+const reviewCount = computed(
+  () => (lines.data.value?.items ?? []).filter((line) => line.needs_review).length,
+)
+
+/**
+ * The server's copy is the only copy.
+ *
+ * `segment.updated` carries the whole record, and it is applied verbatim rather
+ * than merged into the local one. A merge would let a field the client never
+ * touched drift, which is how two tabs end up disagreeing about the same line.
+ */
+function onSegmentUpdated(event: ServerEvent): void {
+  const updated = (event.data as { segment?: Segment }).segment
+  if (!updated || !lines.data.value) return
+
+  const items = lines.data.value.items.map((line) =>
+    line.id === updated.id ? updated : line,
+  )
+  lines.data.value = { ...lines.data.value, items }
+}
+
+function onSegmentsReplaced(event: ServerEvent): void {
+  // Splitting or merging renumbers everything after the change, so the list is
+  // refetched rather than patched.
+  if (event.project_id !== projectId.value) return
+  void lines.run()
+}
+
+const unsubscribers: (() => void)[] = []
+
+onMounted(async () => {
+  await lines.run()
+  unsubscribers.push(
+    events.on('segment.updated', onSegmentUpdated),
+    events.on('segments.replaced', onSegmentsReplaced),
+    events.on('resync.required', () => void lines.run()),
+  )
+})
+
+onBeforeUnmount(() => {
+  for (const unsubscribe of unsubscribers) unsubscribe()
+})
+
+function beginEdit(line: Segment): void {
+  editingId.value = line.id
+  draft.value = line.translated_text ?? ''
+
+  // Focused on the next tick, because the textarea does not exist until the
+  // render triggered by editingId has happened.
+  void nextTick(() => {
+    const element = document.getElementById(`editor-${line.id}`)
+    if (element instanceof HTMLTextAreaElement) {
+      element.focus()
+      element.select()
+    }
+  })
+}
+
+async function commit(): Promise<void> {
+  const id = editingId.value
+  if (!id) return
+
+  saving.value = true
+  actionError.value = null
+  try {
+    await api.segments.update(projectId.value, id, { translated_text: draft.value })
+    editingId.value = null
+  } catch (cause) {
+    actionError.value = cause instanceof ApiError ? cause.message : String(cause)
+  } finally {
+    saving.value = false
+  }
+}
+
+function cancel(): void {
+  editingId.value = null
+  draft.value = ''
+}
+
+async function translate(line: Segment): Promise<void> {
+  actionError.value = null
+  try {
+    await api.segments.translate(projectId.value, line.id)
+  } catch (cause) {
+    actionError.value = cause instanceof ApiError ? cause.message : String(cause)
+  }
+}
+
+async function decide(line: Segment, state: Segment['review_state']): Promise<void> {
+  actionError.value = null
+  try {
+    await api.segments.review(projectId.value, line.id, state)
+  } catch (cause) {
+    actionError.value = cause instanceof ApiError ? cause.message : String(cause)
+  }
+}
+
+async function split(line: Segment): Promise<void> {
+  actionError.value = null
+
+  // Split at the midpoint of the line rather than asking for a time. The user
+  // then drags the boundary; asking for a number they have no way to know
+  // would be a worse starting point than a plausible one.
+  const midpoint = line.start + (line.end - line.start) / 2
+  try {
+    await api.segments.split(projectId.value, line.id, midpoint)
+  } catch (cause) {
+    actionError.value = cause instanceof ApiError ? cause.message : String(cause)
+  }
+}
+
+async function merge(line: Segment): Promise<void> {
+  actionError.value = null
+  try {
+    await api.segments.merge(projectId.value, line.id, true)
+  } catch (cause) {
+    actionError.value = cause instanceof ApiError ? cause.message : String(cause)
+  }
+}
+
+/** Reading speed, coloured by how far over the limit it is. */
+function cpsTone(line: Segment): string {
+  if (line.cps === null) return 'text-ink-faint'
+  if (line.cps > 18) return 'text-status-failed'
+  if (line.cps > 12) return 'text-status-running'
+  return 'text-ink-faint'
+}
 </script>
 
 <template>
-  <PagePlaceholder :title="meta.label" :phase="meta.phase" :description="meta.description" />
+  <div class="space-y-4">
+    <div class="flex flex-wrap items-center gap-3">
+      <label class="flex items-center gap-2 text-sm text-ink-muted">
+        <input v-model="onlyReview" type="checkbox" />
+        只看待审校
+        <span v-if="reviewCount > 0" class="text-status-running">({{ reviewCount }})</span>
+      </label>
+
+      <input
+        v-model="search"
+        type="search"
+        placeholder="搜索原文或译文"
+        class="min-w-48 flex-1 rounded border border-line bg-surface-raised px-3 py-1.5 text-sm outline-none placeholder:text-ink-faint focus:border-accent"
+      />
+
+      <a
+        :href="`${API_BASE}/projects/${projectId}/subtitles.srt`"
+        class="rounded border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent hover:text-ink"
+      >
+        导出 SRT
+      </a>
+      <a
+        :href="`${API_BASE}/projects/${projectId}/subtitles.ass`"
+        class="rounded border border-line px-3 py-1.5 text-sm text-ink-muted transition hover:border-accent hover:text-ink"
+      >
+        导出 ASS
+      </a>
+    </div>
+
+    <p v-if="actionError" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
+      {{ actionError }}
+    </p>
+
+    <p v-if="lines.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
+      {{ lines.error.value }}
+      <button class="ml-2 text-accent hover:underline" @click="lines.run">重试</button>
+    </p>
+
+    <div v-else-if="lines.loading.value && !lines.data.value" class="p-6 text-center text-sm text-ink-muted">
+      加载中…
+    </div>
+
+    <div
+      v-else-if="visible.length === 0"
+      class="rounded border border-dashed border-line p-10 text-center text-sm text-ink-muted"
+    >
+      {{ lines.data.value?.items.length === 0 ? '这个项目还没有字幕行，先运行一次 Pipeline。' : '没有匹配的行。' }}
+    </div>
+
+    <ol v-else class="divide-y divide-line/60 rounded border border-line">
+      <li
+        v-for="line in visible"
+        :key="line.id"
+        class="px-4 py-3 transition"
+        :class="line.needs_review ? 'bg-surface-raised' : ''"
+      >
+        <div class="flex gap-4">
+          <div class="w-20 shrink-0 pt-0.5 text-xs tabular-nums text-ink-faint">
+            <div>{{ formatDuration(line.start) }}</div>
+            <div :class="cpsTone(line)">
+              {{ line.cps === null ? '—' : line.cps.toFixed(1) }}
+            </div>
+          </div>
+
+          <div class="min-w-0 flex-1">
+            <p class="text-sm text-ink-muted">{{ line.source_text }}</p>
+
+            <textarea
+              v-if="editingId === line.id"
+              :id="`editor-${line.id}`"
+              v-model="draft"
+              rows="2"
+              class="mt-1 w-full rounded border border-accent bg-surface-sunken px-2 py-1 text-sm outline-none"
+              @keydown.enter.exact.prevent="commit"
+              @keydown.esc.prevent="cancel"
+            />
+            <p
+              v-else
+              class="mt-1 cursor-text text-sm"
+              :class="line.translated_text ? '' : 'italic text-ink-faint'"
+              @click="beginEdit(line)"
+            >
+              {{ line.translated_text ?? '（未翻译）' }}
+            </p>
+
+            <!-- QC findings are shown inline. A separate panel would make the
+                 reviewer hold the line number in their head while they look at
+                 it. -->
+            <ul v-if="line.qc?.length" class="mt-1 space-y-0.5">
+              <li
+                v-for="finding in line.qc"
+                :key="finding.id"
+                class="text-xs"
+                :class="finding.severity === 'error' ? 'text-status-failed' : 'text-status-running'"
+              >
+                {{ finding.message }}
+              </li>
+            </ul>
+
+            <div class="mt-1.5 flex flex-wrap items-center gap-3 text-xs">
+              <template v-if="editingId === line.id">
+                <button class="text-accent hover:underline" :disabled="saving" @click="commit">
+                  {{ saving ? '保存中…' : '保存' }}
+                </button>
+                <button class="text-ink-faint hover:text-ink" @click="cancel">取消</button>
+              </template>
+              <template v-else>
+                <button class="text-ink-faint hover:text-accent" @click="translate(line)">重译</button>
+                <button class="text-ink-faint hover:text-accent" @click="split(line)">拆分</button>
+                <button class="text-ink-faint hover:text-accent" @click="merge(line)">合并下一行</button>
+                <button class="text-ink-faint hover:text-status-done" @click="decide(line, 'approved')">通过</button>
+                <button class="text-ink-faint hover:text-status-failed" @click="decide(line, 'rejected')">打回</button>
+
+                <span v-if="line.is_edited" class="text-ink-faint">已手工修改</span>
+                <span v-else-if="line.review_state !== 'none'" class="text-ink-faint">
+                  {{ line.review_state }}
+                </span>
+              </template>
+            </div>
+          </div>
+        </div>
+      </li>
+    </ol>
+
+    <p v-if="lines.data.value" class="text-xs text-ink-faint">
+      共 {{ lines.data.value.total }} 行，显示 {{ visible.length }} 行
+    </p>
+  </div>
 </template>
