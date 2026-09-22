@@ -867,12 +867,11 @@ func (t *Translator) buildPrompt(
 // keeps a short batch from being cut off before the model has finished thinking.
 func maxTokensFor(lines int) int {
 	const perLine = 220
-	const floor = 1024
 	const ceiling = 32000
 
 	budget := lines * perLine
-	if budget < floor {
-		return floor
+	if budget < provider.ReasoningTokenFloor {
+		return provider.ReasoningTokenFloor
 	}
 	if budget > ceiling {
 		return ceiling

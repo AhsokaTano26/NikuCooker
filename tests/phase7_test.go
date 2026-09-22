@@ -23,6 +23,7 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/jobs"
 	"github.com/AhsokaTano26/NikuCooker/internal/logging"
 	"github.com/AhsokaTano26/NikuCooker/internal/project"
+	"github.com/AhsokaTano26/NikuCooker/internal/provider"
 	"github.com/AhsokaTano26/NikuCooker/internal/qc"
 	"github.com/AhsokaTano26/NikuCooker/internal/segments"
 	"github.com/AhsokaTano26/NikuCooker/internal/subtitle"
@@ -1019,4 +1020,67 @@ func TestPhase7SingleStageRunIsAccepted(t *testing.T) {
 	// goroutine, and leaving it writing into a closed connection turns a pass
 	// into a flake.
 	h.app.Scheduler.Cancel(created.ID)
+}
+
+// A provider whose reply runs out of room has still answered.
+//
+// The check exists to catch a wrong address, a rejected key and a model the
+// endpoint does not serve — all of which fail before any generation happens. A
+// truncated reply proves none of them are true, so reporting it as a failure
+// sent users to fix a provider that was working, and the advice it printed
+// ("lower the batch size") belonged to a stage this request never reaches.
+//
+// The budget is asserted too, because that is what made it happen: sixteen
+// tokens is less than a model that thinks before it answers spends on the
+// thinking, so the check could not succeed against one.
+func TestPhase7ATruncatedProviderReplyIsNotAFailure(t *testing.T) {
+	h := newAPIHarness(t)
+	fake := newFakeLLM(t)
+
+	// A well-formed reply that stopped because it ran out of budget.
+	fake.reply = func(int, recordedRequest) (int, string) {
+		return http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}]}`
+	}
+
+	_, created, raw := h.request("POST", "/api/v1/providers", map[string]any{
+		"name": "reasoner", "kind": "llm", "type": "openai-compatible",
+		"base_url": fake.server.URL + "/v1",
+		"api_key":  "sk-test",
+		"model":    "some-reasoner",
+	})
+	id, _ := created["id"].(string)
+	if id == "" {
+		t.Fatalf("the provider was not created: %s", raw)
+	}
+
+	status, body, raw := h.request("POST", "/api/v1/providers/"+id+"/test", nil)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %s", status, raw)
+	}
+
+	if body["ok"] != true {
+		t.Fatalf("a reachable provider was reported as broken: %s", raw)
+	}
+
+	// Carried rather than swallowed: a model that spends its whole budget
+	// thinking behaves differently from one that does not.
+	warning, _ := body["warning"].(string)
+	if warning == "" {
+		t.Errorf("the truncation was not reported: %s", raw)
+	}
+
+	// And not in the failure channel, which the interface colours red.
+	if message, _ := body["message"].(string); message != "the provider answered" {
+		t.Errorf("message = %q; a working provider should not carry an error here", message)
+	}
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(fake.requests))
+	}
+	if got := fake.requests[0].MaxTokens; got < provider.ReasoningTokenFloor {
+		t.Errorf("max_tokens = %d, want at least %d: a model that reasons before it "+
+			"answers cannot reply inside a smaller budget", got, provider.ReasoningTokenFloor)
+	}
 }

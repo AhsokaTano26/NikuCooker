@@ -65,6 +65,17 @@ func (r *ChatResponse) Truncated() bool { return r.FinishReason == "length" }
 // ErrTruncated reports a response cut off by the token limit.
 var ErrTruncated = errors.New("provider: the response was cut off by the token limit; raise max_tokens or lower the batch size")
 
+// ReasoningTokenFloor is the smallest response budget worth sending to a model
+// that may reason before it answers.
+//
+// A reasoning model spends tokens on its thinking, and those tokens count
+// against the same budget as the answer. A caller that asks for "reply with one
+// word" and allows sixteen tokens gets a truncated reply rather than a short
+// one, and reads it as a broken endpoint. This is the smallest ceiling that
+// leaves room to think and then answer, and it is a property of the endpoints
+// rather than of any one caller — which is why it lives here.
+const ReasoningTokenFloor = 1024
+
 // APIError is a non-success response from the endpoint.
 type APIError struct {
 	StatusCode int

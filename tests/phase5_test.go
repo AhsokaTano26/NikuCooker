@@ -115,6 +115,11 @@ type recordedRequest struct {
 	System   string
 	User     string
 	JSONMode bool
+
+	// MaxTokens is what the caller asked to allow. Recorded because it is part
+	// of the request's meaning: a budget too small for the answer truncates it,
+	// and the reply alone does not say which side chose that.
+	MaxTokens int
 }
 
 func (r recordedRequest) fullPrompt() string { return r.System + "\n" + r.User }
@@ -163,13 +168,24 @@ func newFakeLLM(t *testing.T) *fakeLLM {
 			ResponseFormat *struct {
 				Type string `json:"type"`
 			} `json:"response_format"`
+			// Either spelling: the client switches field names when a server
+			// rejects one.
+			MaxTokens           int `json:"max_tokens"`
+			MaxCompletionTokens int `json:"max_completion_tokens"`
 		}
 		if err := json.Unmarshal(body, &envelope); err != nil {
 			http.Error(w, `{"error":{"message":"bad request"}}`, http.StatusBadRequest)
 			return
 		}
 
-		recorded := recordedRequest{Model: envelope.Model, JSONMode: envelope.ResponseFormat != nil}
+		recorded := recordedRequest{
+			Model:     envelope.Model,
+			JSONMode:  envelope.ResponseFormat != nil,
+			MaxTokens: envelope.MaxTokens,
+		}
+		if recorded.MaxTokens == 0 {
+			recorded.MaxTokens = envelope.MaxCompletionTokens
+		}
 		for _, message := range envelope.Messages {
 			if message.Role == "system" {
 				recorded.System = message.Content

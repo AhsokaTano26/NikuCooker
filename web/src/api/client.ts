@@ -377,6 +377,10 @@ export interface ProviderTestResult {
   ok: boolean
   message: string
   model?: string
+  /** True of the provider but not a failure — a reasoning model using the
+   *  whole check budget, for instance. Rendered apart from `message` so a
+   *  working provider is not shown in the same colour as a broken one. */
+  warning?: string
 }
 
 export const providers = {

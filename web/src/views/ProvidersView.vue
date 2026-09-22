@@ -10,6 +10,15 @@ const providers = useAsync(() => api.providers.list())
 
 const actionError = ref<string | null>(null)
 const notice = ref<string | null>(null)
+
+/**
+ * Something true about the provider that is not a failure.
+ *
+ * Kept apart from the success notice so it can be styled as a caution: a
+ * working provider whose reply used the whole check budget is not broken, and
+ * showing it in the failure colour would send the user to fix it.
+ */
+const caution = ref<string | null>(null)
 const busy = ref<string | null>(null)
 
 /** The form, which doubles as the editor for an existing provider. */
@@ -143,6 +152,9 @@ const canSubmit = computed(() => form.name.trim() !== '' && form.base_url.trim()
     <section class="space-y-4">
       <p v-if="notice" class="rounded border border-status-done/40 bg-surface-raised p-3 text-sm text-status-done">
         {{ notice }}
+      </p>
+      <p v-if="caution" class="rounded border border-status-warn/40 bg-surface-raised p-3 text-xs text-status-warn">
+        {{ caution }}
       </p>
       <p v-if="actionError" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
         {{ actionError }}

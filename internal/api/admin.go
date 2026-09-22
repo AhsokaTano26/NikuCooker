@@ -1,6 +1,8 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -307,10 +309,18 @@ func (s *Server) testProvider(w http.ResponseWriter, r *http.Request) {
 
 	reply, err := client.Chat(r.Context(), provider.ChatRequest{
 		User: "Reply with the single word: ok",
-		// A tiny response: this is a connectivity check, not a generation.
-		MaxTokens: 16,
+		// Small, but not arbitrarily small. The answer is one word, and the
+		// budget is not sized for the answer — it is sized for a model that
+		// thinks before it emits one, because on those the answer arrives after
+		// the thinking and runs out of room first.
+		//
+		// This is a ceiling, not a target: a model with nothing to think about
+		// stops long before it, so raising it does not slow the ordinary case
+		// down.
+		MaxTokens: provider.ReasoningTokenFloor,
 	})
-	if err != nil {
+
+	if err != nil && !errors.Is(err, provider.ErrTruncated) {
 		// Reported as a 200 with ok:false rather than as an HTTP error. The
 		// request succeeded and its answer is "your provider is misconfigured",
 		// which is a result the interface renders, not a transport failure.
@@ -318,15 +328,35 @@ func (s *Server) testProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	model := reply.Model
-	if model == "" {
-		model = record.Model
+	// `reply` is nil whenever there was an error, truncation included: Chat
+	// returns the response only on success. The configured model is what to
+	// name in that case, which is also the more useful answer — it is what the
+	// user will have to change if the endpoint is serving something else.
+	model := record.Model
+	if reply != nil && reply.Model != "" {
+		model = reply.Model
 	}
-	s.respond(w, http.StatusOK, providerTestView{
-		OK:      true,
-		Message: "the provider answered",
-		Model:   model,
-	})
+
+	view := providerTestView{OK: true, Message: "the provider answered", Model: model}
+
+	// A reply that ran out of room still proves everything this check exists to
+	// prove: the address is right, the key is accepted, the model is served.
+	// Reporting it as a failure sent users to fix a provider that was working.
+	//
+	// It is not nothing either, so it is carried as a warning rather than
+	// swallowed: a model that spends the whole budget thinking behaves
+	// differently from one that does not, and the translation stage's budget is
+	// scaled to its batch rather than fixed, which is the difference worth
+	// knowing about before a run rather than during one.
+	if errors.Is(err, provider.ErrTruncated) {
+		view.Warning = fmt.Sprintf(
+			"the reply used the whole %d-token check budget before finishing, which is normal for "+
+				"a model that reasons before it answers. Translation scales its budget to the batch, "+
+				"so this is worth knowing rather than fixing.",
+			provider.ReasoningTokenFloor)
+	}
+
+	s.respond(w, http.StatusOK, view)
 }
 
 // ---------------------------------------------------------------------------

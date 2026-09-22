@@ -262,6 +262,12 @@ type providerTestView struct {
 	OK      bool   `json:"ok"`
 	Message string `json:"message"`
 	Model   string `json:"model,omitempty"`
+
+	// Warning is something true about the provider that is not a failure.
+	// Separate from Message rather than folded into it, because a client that
+	// renders the two the same way would show a working provider in the same
+	// red as a broken one.
+	Warning string `json:"warning,omitempty"`
 }
 
 // settingsView is the resolved configuration and where it came from.
