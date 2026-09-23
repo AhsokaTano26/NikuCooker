@@ -70,6 +70,7 @@ type Setting struct {
 // Ordered here rather than by the order settings happen to be declared,
 // because the sequence a person reads them in is a decision.
 var Groups = []string{
+	"模型下载",
 	"识别",
 	"字幕",
 	"翻译",
@@ -88,6 +89,14 @@ var Groups = []string{
 // coincidence: the ones that could not be are absent. See NotEditable for what
 // was left out and why.
 var Catalog = []Setting{
+	// -----------------------------------------------------------------------
+	// 模型下载
+	// -----------------------------------------------------------------------
+	{
+		Key: "models.endpoint", Name: "模型下载源", Group: "模型下载", Kind: KindString,
+		Help: "Hugging Face 兼容服务的基础地址。保存后，下一次模型下载立即使用新地址。",
+	},
+
 	// -----------------------------------------------------------------------
 	// 识别
 	// -----------------------------------------------------------------------

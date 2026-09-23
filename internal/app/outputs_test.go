@@ -267,3 +267,20 @@ func TestClearingASettingRestoresTheDefault(t *testing.T) {
 		t.Errorf("subtitle.max_cps = %v after the reset, want %v", got, before)
 	}
 }
+
+// A browser save must update the downloader itself, not only the configuration
+// shown back to the browser. Otherwise the page says "mirror" while the next
+// multi-gigabyte request still goes to the official host until a restart.
+func TestUpdatingModelEndpointReconfiguresTheDownloader(t *testing.T) {
+	application, _ := outputsHarness(t)
+	ctx := context.Background()
+
+	const endpoint = "https://mirror.example.com"
+	if err := application.UpdateSettings(ctx, map[string]any{"models.endpoint": endpoint}); err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+
+	if got := application.Models.Endpoint(); got != endpoint {
+		t.Errorf("downloader endpoint = %q, want %q", got, endpoint)
+	}
+}

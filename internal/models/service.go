@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/database"
@@ -67,7 +68,8 @@ type Record struct {
 type Service struct {
 	db       *database.DB
 	modelDir string
-	client   *HFClient
+	client   atomic.Pointer[HFClient]
+	token    string
 	log      *slog.Logger
 
 	mu          sync.Mutex
@@ -101,13 +103,15 @@ func New(opts Options) (*Service, error) {
 		return nil, fmt.Errorf("models: create %s: %w", opts.ModelDir, err)
 	}
 
-	return &Service{
+	service := &Service{
 		db:          opts.DB,
 		modelDir:    opts.ModelDir,
-		client:      NewHFClient(opts.Endpoint, opts.Token),
+		token:       opts.Token,
 		log:         opts.Log,
 		downloading: map[string]bool{},
-	}, nil
+	}
+	service.client.Store(NewHFClient(opts.Endpoint, opts.Token))
+	return service, nil
 }
 
 // Dir reports where a model's files live.
@@ -117,6 +121,21 @@ func (s *Service) Dir(kind Kind, name string) string {
 
 // Root reports the model directory.
 func (s *Service) Root() string { return s.modelDir }
+
+// Endpoint reports the model hub used for new downloads.
+func (s *Service) Endpoint() string {
+	if client := s.client.Load(); client != nil {
+		return client.BaseURL
+	}
+	return DefaultEndpoint
+}
+
+// SetEndpoint changes the model hub used by downloads started after this call.
+// A running download keeps its client snapshot, so one model never mixes files
+// from two sources when the setting changes halfway through.
+func (s *Service) SetEndpoint(endpoint string) {
+	s.client.Store(NewHFClient(endpoint, s.token))
+}
 
 // Resolve returns the on-disk directory of a ready model.
 //
@@ -332,8 +351,9 @@ func (s *Service) Download(ctx context.Context, id string, onProgress func(writt
 	}
 
 	s.log.Info("downloading a model", "id", id, "repo", entry.Repo)
+	client := s.client.Load()
 
-	files, err := s.client.ListFiles(ctx, entry.Repo)
+	files, err := client.ListFiles(ctx, entry.Repo)
 	if err != nil {
 		return err
 	}
@@ -350,7 +370,7 @@ func (s *Service) Download(ctx context.Context, id string, onProgress func(writt
 		}
 
 		target := filepath.Join(destination, filepath.FromSlash(file.Name))
-		written, err := s.client.DownloadFile(ctx, entry.Repo, file.Name, target, onProgress)
+		written, err := client.DownloadFile(ctx, entry.Repo, file.Name, target, onProgress)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err

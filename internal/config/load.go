@@ -258,6 +258,7 @@ var envBindings = []struct {
 	// configuration. ConfigFileFromEnv reads it.
 	{"NIKUCOOKER_DATA_DIR", "storage.data_dir", envString},
 	{"NIKUCOOKER_MODEL_DIR", "storage.model_dir", envString},
+	{"NIKUCOOKER_MODELS_ENDPOINT", "models.endpoint", envString},
 	{"NIKUCOOKER_HOST", "server.host", envString},
 	{"NIKUCOOKER_PORT", "server.port", envInt},
 	{"NIKUCOOKER_LOG_LEVEL", "log.level", envString},

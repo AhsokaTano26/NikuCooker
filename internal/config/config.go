@@ -14,6 +14,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ import (
 type Config struct {
 	Server      Server      `yaml:"server"`
 	Storage     Storage     `yaml:"storage"`
+	Models      Models      `yaml:"models"`
 	Pipeline    Pipeline    `yaml:"pipeline"`
 	AI          AI          `yaml:"ai"`
 	Audio       Audio       `yaml:"audio"`
@@ -59,6 +61,13 @@ type Server struct {
 type Storage struct {
 	DataDir  string `yaml:"data_dir"`
 	ModelDir string `yaml:"model_dir"`
+}
+
+// Models configures where downloadable model repositories are fetched from.
+type Models struct {
+	// Endpoint is the root of a Hugging Face-compatible model hub. It may be
+	// the official service, a mirror, or a self-hosted proxy.
+	Endpoint string `yaml:"endpoint"`
 }
 
 // Pipeline selects which stages a run includes.
@@ -344,6 +353,9 @@ func Default() *Config {
 			DataDir:  "./data",
 			ModelDir: "./models",
 		},
+		Models: Models{
+			Endpoint: "https://huggingface.co",
+		},
 		Pipeline: Pipeline{
 			// polish is off because it is a second full LLM pass over every
 			// line, roughly doubling translation cost for a benefit largely
@@ -553,6 +565,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Storage.ModelDir == "" {
 		add("storage.model_dir: must not be empty")
+	}
+	if endpoint, err := url.Parse(c.Models.Endpoint); err != nil ||
+		(endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
+		endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		add("models.endpoint: %q must be a complete http:// or https:// URL without credentials, query or fragment",
+			c.Models.Endpoint)
 	}
 
 	switch c.AI.Python {

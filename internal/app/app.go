@@ -263,6 +263,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	modelService, err := models.New(models.Options{
 		DB:       db,
 		ModelDir: cfg.Storage.ModelDir,
+		Endpoint: cfg.Models.Endpoint,
 		Log:      opts.Log,
 	})
 	if err != nil {
@@ -489,6 +490,9 @@ func (a *App) reloadConfig(ctx context.Context) error {
 // publish makes a resolved configuration the one in effect.
 func (a *App) publish(cfg *config.Config, provenance config.Provenance) {
 	a.config.Store(&resolved{cfg: cfg, prov: provenance})
+	if a.Models != nil {
+		a.Models.SetEndpoint(cfg.Models.Endpoint)
+	}
 
 	// The logger was built before the configuration existed, so its threshold
 	// is applied here instead of being baked into the handler at construction.

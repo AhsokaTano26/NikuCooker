@@ -54,6 +54,60 @@ func TestLoadAppliesLayersInOrder(t *testing.T) {
 	}
 }
 
+// Removing the models.endpoint field, ignoring the environment binding, or
+// failing to carry the value into the resolved document must fail this test.
+func TestLoadAppliesTheModelDownloadEndpoint(t *testing.T) {
+	layer, err := EnvLayer([]string{
+		"NIKUCOOKER_MODELS_ENDPOINT=https://mirror.example.com",
+	})
+	if err != nil {
+		t.Fatalf("EnvLayer: %v", err)
+	}
+
+	cfg, provenance, err := Load(layer)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	document, err := cfg.AsMap()
+	if err != nil {
+		t.Fatalf("AsMap: %v", err)
+	}
+
+	models, ok := document["models"].(map[string]any)
+	if !ok {
+		t.Fatalf("models configuration = %#v, want a section", document["models"])
+	}
+	if got := models["endpoint"]; got != "https://mirror.example.com" {
+		t.Errorf("models.endpoint = %#v, want the configured mirror", got)
+	}
+	if provenance["models.endpoint"] != SourceEnv {
+		t.Errorf("provenance = %q, want %q", provenance["models.endpoint"], SourceEnv)
+	}
+}
+
+func TestLoadRejectsAnUnsafeModelDownloadEndpoint(t *testing.T) {
+	unsafe := []string{
+		"mirror.example.com",
+		"ftp://mirror.example.com",
+		"https://user:secret@mirror.example.com",
+		"https://mirror.example.com?token=secret",
+	}
+
+	for _, endpoint := range unsafe {
+		t.Run(endpoint, func(t *testing.T) {
+			_, _, err := Load(Layer{Source: SourceDatabase, Data: map[string]any{
+				"models": map[string]any{"endpoint": endpoint},
+			}})
+			if err == nil {
+				t.Fatalf("accepted unsafe models.endpoint %q", endpoint)
+			}
+			if !strings.Contains(err.Error(), "models.endpoint") {
+				t.Errorf("error does not name models.endpoint: %v", err)
+			}
+		})
+	}
+}
+
 func TestUnknownKeyIsRejected(t *testing.T) {
 	// A silently ignored typo is the most common reason a setting "does not
 	// work". Rejecting it names the key and the line.
