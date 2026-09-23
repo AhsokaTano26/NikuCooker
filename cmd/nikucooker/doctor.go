@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -15,8 +16,8 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/media"
 	"github.com/AhsokaTano26/NikuCooker/internal/models"
 	"github.com/AhsokaTano26/NikuCooker/internal/platform"
+	"github.com/AhsokaTano26/NikuCooker/internal/provision"
 	"github.com/AhsokaTano26/NikuCooker/internal/subtitle"
-	"os/exec"
 )
 
 // check is one line of the doctor report.
@@ -120,6 +121,7 @@ func runChecks(cmd *cobra.Command, g *globals) []check {
 	checks = append(checks, checkFFmpeg(ctx, application))
 	checks = append(checks, checkSubtitleFont(ctx, application))
 	checks = append(checks, checkPython(ctx, application))
+	checks = append(checks, checkRuntime(application))
 	checks = append(checks, checkModels(ctx, application))
 	checks = append(checks, checkProvider(ctx, application))
 
@@ -308,6 +310,76 @@ func burnFix(ffmpegPath string) string {
 	}
 }
 
+// pythonWorkerFix says what to do about a missing AI environment.
+//
+// Three answers, in the order a user is likely to want them. A release binary
+// can install its own environment from the interface, and saying so is the
+// whole point of that feature — "run make ai-install" is advice for someone
+// with a checkout, which a user who downloaded a binary does not have.
+func pythonWorkerFix(application *app.App) string {
+	if ok, _ := application.ProvisioningAvailable(); ok {
+		return "install it from the System page of the interface (about 300 MB), " +
+			"or run `make ai-install` in a checkout"
+	}
+	if _, err := application.AIDir(); err != nil {
+		return "the AI worker's source is missing next to the program; " +
+			"extract the archive again, keeping its ai/ directory beside the binary"
+	}
+	return "run `make ai-install` in a checkout, or set ai.python to an interpreter " +
+		"that has the AI dependencies installed"
+}
+
+// checkRuntime reports a provisioned environment that no longer works.
+//
+// A virtual environment records absolute paths, so an environment built before
+// the program or the data directory was moved still exists and no longer runs.
+// Without this check that shows up as a generic "no interpreter was found",
+// which sends the user looking for a Python they already installed.
+func checkRuntime(application *app.App) check {
+	runtimeDir := application.RuntimeDir()
+	if runtimeDir == "" {
+		return check{Name: "AI runtime", Status: "ok", Detail: "not used on this installation"}
+	}
+
+	python := platform.RuntimeVenvPython(runtimeDir)
+	if _, err := os.Stat(python); err != nil {
+		return check{
+			Name: "AI runtime", Status: "warn",
+			Detail: "no environment is installed; the interface can install one (about 300 MB)",
+		}
+	}
+
+	if err := exec.Command(python, "-c", "pass").Run(); err != nil {
+		return check{
+			Name: "AI runtime", Status: "fail",
+			Detail: fmt.Sprintf("%s exists but will not run: %v", python, err),
+			Fix:    "install it again from the System page of the interface",
+		}
+	}
+
+	manifest, err := provision.ReadManifest(platform.RuntimeManifestPath(runtimeDir))
+	if err != nil {
+		return check{Name: "AI runtime", Status: "ok", Detail: python}
+	}
+
+	// The recorded source directory is the thing that goes missing when an
+	// archive is moved after the environment was built.
+	if _, err := os.Stat(manifest.AIDir); err != nil {
+		return check{
+			Name: "AI runtime", Status: "fail",
+			Detail: fmt.Sprintf("built from %s, which is no longer there", manifest.AIDir),
+			Fix: "extract the archive where you want it to stay, then install again " +
+				"from the System page",
+		}
+	}
+
+	return check{
+		Name:   "AI runtime",
+		Status: "ok",
+		Detail: fmt.Sprintf("%s (built %s)", python, manifest.CreatedAt.Format("2006-01-02")),
+	}
+}
+
 func checkPython(ctx context.Context, app *app.App) check {
 	dir, err := app.AIDir()
 	if err != nil {
@@ -321,14 +393,14 @@ func checkPython(ctx context.Context, app *app.App) check {
 	python, err := platform.ResolvePython(ctx, platform.ResolveOptions{
 		Explicit:      app.Config().AI.Python,
 		AIDir:         dir,
+		RuntimeDir:    app.RuntimeDir(),
 		RequireImport: true,
 	})
 	if err != nil {
 		return check{
 			Name: "python worker", Status: "fail",
 			Detail: err.Error(),
-			Fix: "run `make ai-install` in a checkout, or set ai.python to an interpreter " +
-				"that has the AI dependencies installed",
+			Fix:    pythonWorkerFix(app),
 		}
 	}
 

@@ -33,6 +33,7 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/platform"
 	"github.com/AhsokaTano26/NikuCooker/internal/project"
 	"github.com/AhsokaTano26/NikuCooker/internal/provider"
+	"github.com/AhsokaTano26/NikuCooker/internal/provision"
 	qcrepo "github.com/AhsokaTano26/NikuCooker/internal/qc"
 	"github.com/AhsokaTano26/NikuCooker/internal/segments"
 	"github.com/AhsokaTano26/NikuCooker/internal/settings"
@@ -155,13 +156,39 @@ type App struct {
 	// The worker pool is started on first use rather than at construction.
 	// A `project list` must not spawn Python processes, and it must not fail
 	// because Python is missing.
-	workerOnce sync.Once
-	worker     *worker.Pool
-	workerErr  error
+	//
+	// Replaceable rather than a bare sync.Once, because a Once latches its
+	// failure for the life of the process — and the failure this one reports is
+	// "there is no Python environment", which the user can then fix from the
+	// interface. Without a way to forget, the message would survive the thing
+	// it was about. See InvalidateWorker.
+	workerMu   sync.Mutex
+	workerSlot *workerSlot
+	aiDirSlot  *aiDirSlot
+	// retired holds pools replaced by InvalidateWorker. Kept rather than shut
+	// down at that moment because a job in flight may hold a worker from one,
+	// and stopping it there would fail that job at an unpredictable point.
+	retired []*worker.Pool
 
-	aiDirOnce sync.Once
-	aiDir     string
-	aiDirErr  error
+	provision *provision.Manager
+}
+
+// workerSlot is one attempt at resolving an interpreter and building a pool.
+//
+// The Once inside supplies the happens-before that a field-level Once used to:
+// every caller that reads the slot blocks in Do until the first of them has
+// filled in pool and err.
+type workerSlot struct {
+	once sync.Once
+	pool *worker.Pool
+	err  error
+}
+
+// aiDirSlot is one attempt at finding the worker package.
+type aiDirSlot struct {
+	once sync.Once
+	dir  string
+	err  error
 }
 
 // New builds the application.
@@ -280,6 +307,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		Events:       events.NewBus(events.DefaultBufferSize),
 		Logs:         logBuffer,
 		registry:     registry,
+		provision:    provision.NewManager(opts.Log),
 	}
 
 	// Swept once per process, here rather than on a timer: an abandoned upload
@@ -508,11 +536,30 @@ func (a *App) sweepUploads() {
 
 // Close releases the resources an App holds.
 func (a *App) Close() error {
-	if a.worker != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), a.Config().Worker.ShutdownTimeout)
-		defer cancel()
-		_ = a.worker.Shutdown(ctx)
+	ctx, cancel := context.WithTimeout(context.Background(), a.Config().Worker.ShutdownTimeout)
+	defer cancel()
+
+	a.workerMu.Lock()
+	pool := (*worker.Pool)(nil)
+	if a.workerSlot != nil {
+		pool = a.workerSlot.pool
 	}
+	retired := a.retired
+	a.retired = nil
+	a.workerMu.Unlock()
+
+	if pool != nil {
+		_ = pool.Shutdown(ctx)
+	}
+	// Pools replaced by provisioning, shut down now that nothing can be holding
+	// one. They were kept alive at the moment of replacement for exactly this:
+	// a job in flight then is finished by now, or it is not coming back.
+	for _, old := range retired {
+		if old != pool {
+			_ = old.Shutdown(ctx)
+		}
+	}
+
 	if a.db != nil {
 		return a.db.Close()
 	}
@@ -574,6 +621,7 @@ func (a *App) ResolvePython(ctx context.Context) (string, error) {
 	return platform.ResolvePython(ctx, platform.ResolveOptions{
 		Explicit:      a.Config().AI.Python,
 		AIDir:         dir,
+		RuntimeDir:    a.RuntimeDir(),
 		RequireImport: false,
 	})
 }
@@ -611,74 +659,118 @@ func (f *artifactStoreFactory) For(projectID string) *artifact.Store {
 // a command that only lists projects never touches Python — and a machine
 // without it can still use everything the pipeline does before recognition.
 func (a *App) Worker(ctx context.Context) (*worker.Pool, error) {
-	a.workerOnce.Do(func() {
-		dir, err := a.AIDir()
-		if err != nil {
-			a.workerErr = err
-			return
-		}
+	slot := a.currentWorkerSlot()
+	slot.once.Do(func() { slot.pool, slot.err = a.buildWorker(ctx) })
 
-		// The digest is what the worker checks its own schema against during
-		// the handshake. Both sides computing it from the same fixtures is what
-		// makes a protocol change a startup failure rather than a
-		// misinterpreted message halfway through a job.
-		digest, err := protocol.SchemaDigest()
-		if err != nil {
-			a.workerErr = fmt.Errorf("app: compute the protocol schema digest: %w", err)
-			return
-		}
-
-		// Resolved against the package directory, which is what makes the
-		// virtual environment beside it discoverable.
-		python, err := platform.ResolvePython(ctx, platform.ResolveOptions{
-			Explicit:      a.Config().AI.Python,
-			AIDir:         dir,
-			RequireImport: true,
-		})
-		if err != nil {
-			a.workerErr = err
-			return
-		}
-
-		// Checked here rather than left to the import. A Python that is the
-		// wrong version fails deep inside a dependency with a message about a
-		// syntax error or a missing symbol, which reads as a broken install
-		// rather than as one wrong setting.
-		if version, err := platform.Version(ctx, python); err != nil {
-			a.workerErr = err
-			return
-		} else if constraint, err := platform.ParseConstraint(a.Config().AI.PythonVersion); err != nil {
-			a.workerErr = err
-			return
-		} else if !constraint.IsEmpty() && !constraint.Allows(version) {
-			a.workerErr = fmt.Errorf(
-				"app: the AI worker needs Python %s but %s is %s",
-				a.Config().AI.PythonVersion, python, version)
-			return
-		}
-
-		args := a.Config().AI.Args
-		if len(args) == 0 {
-			args = []string{"-m", "nikucooker_ai"}
-		}
-
-		a.worker = worker.NewPool(worker.Config{
-			Python:           python,
-			Args:             args,
-			Dir:              dir,
-			SchemaDigest:     digest,
-			CodeRevision:     a.codeRevision,
-			StartupTimeout:   a.Config().Worker.StartupTimeout,
-			ShutdownTimeout:  a.Config().Worker.ShutdownTimeout,
-			ModelLoadTimeout: a.Config().Worker.ModelLoadTimeout,
-			StallTimeout:     a.Config().Worker.StallTimeout,
-			Log:              a.log,
-		}, a.Config().Worker.PoolSize)
-	})
-	if a.workerErr != nil {
-		return nil, a.workerErr
+	if slot.err != nil {
+		return nil, slot.err
 	}
-	return a.worker, nil
+	return slot.pool, nil
+}
+
+// currentWorkerSlot returns the slot in use, creating it if this is the first
+// caller.
+func (a *App) currentWorkerSlot() *workerSlot {
+	a.workerMu.Lock()
+	defer a.workerMu.Unlock()
+
+	if a.workerSlot == nil {
+		a.workerSlot = &workerSlot{}
+	}
+	return a.workerSlot
+}
+
+// buildWorker resolves an interpreter and builds the pool.
+//
+// Extracted from the closure it used to be, so that it returns its error rather
+// than latching it: a resolution order that can only be exercised by starting a
+// server is a resolution order with no tests.
+func (a *App) buildWorker(ctx context.Context) (*worker.Pool, error) {
+	dir, err := a.AIDir()
+	if err != nil {
+		return nil, err
+	}
+
+	// The digest is what the worker checks its own schema against during the
+	// handshake. Both sides computing it from the same fixtures is what makes a
+	// protocol change a startup failure rather than a misinterpreted message
+	// halfway through a job.
+	digest, err := protocol.SchemaDigest()
+	if err != nil {
+		return nil, fmt.Errorf("app: compute the protocol schema digest: %w", err)
+	}
+
+	// Resolved against the package directory, which is what makes the virtual
+	// environment beside it discoverable.
+	python, err := platform.ResolvePython(ctx, platform.ResolveOptions{
+		Explicit:      a.Config().AI.Python,
+		AIDir:         dir,
+		RuntimeDir:    a.RuntimeDir(),
+		RequireImport: true,
+		Hint:          a.provisionHint(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Checked here rather than left to the import. A Python that is the wrong
+	// version fails deep inside a dependency with a message about a syntax
+	// error or a missing symbol, which reads as a broken install rather than as
+	// one wrong setting.
+	version, err := platform.Version(ctx, python)
+	if err != nil {
+		return nil, err
+	}
+	constraint, err := platform.ParseConstraint(a.Config().AI.PythonVersion)
+	if err != nil {
+		return nil, err
+	}
+	if !constraint.IsEmpty() && !constraint.Allows(version) {
+		return nil, fmt.Errorf("app: the AI worker needs Python %s but %s is %s",
+			a.Config().AI.PythonVersion, python, version)
+	}
+
+	args := a.Config().AI.Args
+	if len(args) == 0 {
+		args = []string{"-m", "nikucooker_ai"}
+	}
+
+	return worker.NewPool(worker.Config{
+		Python:           python,
+		Args:             args,
+		Dir:              dir,
+		SchemaDigest:     digest,
+		CodeRevision:     a.codeRevision,
+		StartupTimeout:   a.Config().Worker.StartupTimeout,
+		ShutdownTimeout:  a.Config().Worker.ShutdownTimeout,
+		ModelLoadTimeout: a.Config().Worker.ModelLoadTimeout,
+		StallTimeout:     a.Config().Worker.StallTimeout,
+		Log:              a.log,
+	}, a.Config().Worker.PoolSize), nil
+}
+
+// InvalidateWorker forgets the resolved worker and AI directory.
+//
+// Called after provisioning succeeds. Both are forgotten because both can have
+// been resolved while the environment was missing: the AI directory fails when
+// a user extracts the archive into a folder the binary had already searched,
+// and the interpreter fails before anything is installed.
+//
+// Concurrency is the same as it was with a bare sync.Once for every ordinary
+// caller: they all observe the same slot and block in its Do. The one new
+// window is a caller that read the slot just before this replaced it — a stale
+// success hands back a pool that still works, and a stale failure is corrected
+// on the next call. Closing that window would mean holding the lock across
+// buildWorker, which spawns Python; that is the worse trade.
+func (a *App) InvalidateWorker() {
+	a.workerMu.Lock()
+	defer a.workerMu.Unlock()
+
+	if a.workerSlot != nil && a.workerSlot.pool != nil {
+		a.retired = append(a.retired, a.workerSlot.pool)
+	}
+	a.workerSlot = nil
+	a.aiDirSlot = nil
 }
 
 // AIDir returns the directory holding the nikucooker_ai package.
@@ -687,10 +779,30 @@ func (a *App) Worker(ctx context.Context) (*worker.Pool, error) {
 // path the worker will actually be launched from, and a diagnosis that resolved
 // it differently from the thing it was diagnosing would be worse than none.
 func (a *App) AIDir() (string, error) {
-	a.aiDirOnce.Do(func() {
-		a.aiDir, a.aiDirErr = resolveAIDir(a.Config())
-	})
-	return a.aiDir, a.aiDirErr
+	a.workerMu.Lock()
+	if a.aiDirSlot == nil {
+		a.aiDirSlot = &aiDirSlot{}
+	}
+	slot := a.aiDirSlot
+	a.workerMu.Unlock()
+
+	slot.once.Do(func() { slot.dir, slot.err = resolveAIDir(a.Config()) })
+	return slot.dir, slot.err
+}
+
+// RuntimeDir is where a provisioned environment lives, or "" when there is no
+// data directory to put one in.
+//
+// The empty case is not a degraded mode: a container has ai.python set and a
+// checkout has ai/.venv, and neither needs a second place to look.
+//
+// Exported because the doctor reports on it, and a diagnosis that computed the
+// path differently from the thing it was diagnosing would be worse than none.
+func (a *App) RuntimeDir() string {
+	if a.Config().Storage.DataDir == "" {
+		return ""
+	}
+	return platform.RuntimeDir(a.Config().Storage.DataDir)
 }
 
 // resolveAIDir finds the directory holding the nikucooker_ai package.
