@@ -563,27 +563,27 @@ func (s *Server) stageNames() []string {
 func stageLabel(name string) string {
 	switch name {
 	case "probe":
-		return "Reading the container"
+		return "读取媒体信息"
 	case "audio":
-		return "Extracting audio"
+		return "提取音频"
 	case "vad":
-		return "Detecting speech"
+		return "检测语音"
 	case "asr":
-		return "Transcribing"
+		return "语音识别"
 	case "segmentation":
-		return "Splitting into lines"
+		return "切分字幕"
 	case "context":
-		return "Analysing the work"
+		return "分析上下文"
 	case "translation":
-		return "Translating"
+		return "翻译字幕"
 	case "polish":
-		return "Polishing"
+		return "润色译文"
 	case "qc":
-		return "Checking quality"
+		return "质量检查"
 	case "subtitle":
-		return "Writing subtitles"
+		return "生成字幕文件"
 	case "render":
-		return "Rendering"
+		return "渲染视频"
 	default:
 		return name
 	}

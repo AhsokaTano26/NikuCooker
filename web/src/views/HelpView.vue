@@ -15,69 +15,55 @@ import { useAsync } from '@/composables/useAsync'
  * stages are, what to do when something goes wrong, and nothing about how any
  * of it is built.
  *
- * Stage names are given with the English label the pipeline shows beside the
- * Chinese, because the two do not match and a help page that names a stage
- * differently from the screen the reader is looking at is worse than no help
- * page.
+ * Stage names match the Chinese labels returned by the pipeline, so the help
+ * page and the project page use the same vocabulary.
  */
 
 interface Stage {
-  /** What the pipeline displays, verbatim. */
-  label: string
   name: string
   description: string
 }
 
 const stages: Stage[] = [
   {
-    label: 'Reading the container',
-    name: '读取容器',
+    name: '读取媒体信息',
     description: '读出时长、分辨率、音轨。失败通常是文件损坏或不是视频。',
   },
   {
-    label: 'Extracting audio',
     name: '提取音频',
     description: '把音轨抽成模型能读的格式，之后所有识别都基于这一步的产物。',
   },
   {
-    label: 'Detecting speech',
-    name: '语音检测',
+    name: '检测语音',
     description: '找出哪里有人说话、哪里是静音或纯音乐，交给识别的那部分因此更短也更准。',
   },
   {
-    label: 'Transcribing',
     name: '语音识别',
     description: '日语转日语文本。这一步在本机跑，音频不出这台机器。模型越大越准也越慢。',
   },
   {
-    label: 'Splitting into lines',
-    name: '切分字幕行',
+    name: '切分字幕',
     description: '把连续的文本切成一行一条字幕，并按停顿和标点调整断句。',
   },
   {
-    label: 'Analysing the work',
-    name: '通读作品',
+    name: '分析上下文',
     description:
       '先看一遍全片，总结剧情、列出人物和专有名词。有了它，翻译才知道「她」是谁、名字该怎么统一。这一步要调用翻译服务。可以不启用。',
   },
   {
-    label: 'Translating',
-    name: '翻译',
+    name: '翻译字幕',
     description: '日译中。按行缓存，改几行只会重翻几行。这是唯一会把文本发到外部服务的一步。',
   },
   {
-    label: 'Checking quality',
     name: '质量检查',
     description:
       '自动挑出可疑的译文：过长、过短、没翻、语速超限。结果在项目页的「审校队列」里处理。',
   },
   {
-    label: 'Writing subtitles',
     name: '生成字幕文件',
     description: '写出 SRT 和 ASS。ASS 带样式，是渲染硬字幕时用的那份。',
   },
   {
-    label: 'Rendering',
     name: '渲染视频',
     description: '把字幕压进画面（硬字幕）或封装成字幕轨（软字幕）。',
   },
@@ -227,10 +213,7 @@ onMounted(() => {
       <h2 class="text-sm font-medium text-ink-muted">流水线的各个阶段</h2>
       <dl class="mt-3 space-y-3 text-sm">
         <div v-for="stage in stages" :key="stage.name">
-          <dt class="flex flex-wrap items-baseline gap-x-2">
-            <span class="text-ink">{{ stage.name }}</span>
-            <span class="font-mono text-xs text-ink-faint">{{ stage.label }}</span>
-          </dt>
+          <dt class="text-ink">{{ stage.name }}</dt>
           <dd class="mt-0.5 text-ink-muted">{{ stage.description }}</dd>
         </div>
       </dl>
