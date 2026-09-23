@@ -369,14 +369,34 @@ func (m *Manager) exec(ctx context.Context, req Request, name string, args ...st
 	cmd.Stdout = buffer
 	cmd.Stderr = buffer
 
-	m.setProcess(cmd)
+	// Started and published under one lock, and not with Run.
+	//
+	// exec.Cmd fills in its Process field inside Start, and a cancel that read
+	// the command out of m.proc before that write would be racing the runtime
+	// for the pointer — and, having lost, would kill nothing while reporting
+	// that it had. Publishing only a started command closes that: a cancel
+	// either sees no process, because this one has not started, or sees one it
+	// can kill. The lock is held across fork and exec, which is microseconds.
+	//
+	// Run is Start and Wait together, so this does both by hand.
+	m.mu.Lock()
+	if err := cmd.Start(); err != nil {
+		m.mu.Unlock()
+		return buffer.String(), err
+	}
+	m.proc = cmd
+	m.mu.Unlock()
+
 	defer m.setProcess(nil)
 
-	err := cmd.Run()
+	err := cmd.Wait()
 	return buffer.String(), err
 }
 
 // setProcess records the command a cancel would have to kill.
+//
+// Nil to clear it, which is how a finished command stops being killable — the
+// pid may have been reused by the time anyone tried.
 func (m *Manager) setProcess(cmd *exec.Cmd) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
