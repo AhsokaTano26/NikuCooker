@@ -1,9 +1,9 @@
 # 安装 NikuCooker
 
-[English](INSTALL.md) · **中文**
+[← 返回 README](README.zh-CN.md) · [English](INSTALL.md) · **中文**
 
 本文只讲**怎么装发布版二进制**，覆盖 Windows、macOS 和 Linux。用 Docker、从源码构建、
-以及这个程序到底能做什么，见 [README](README.zh-CN.md)。
+以及这个程序到底能做什么，都在 README 里。
 
 每次打 tag 发布时都会产出一个二进制，网页界面已经嵌在里面，所以不需要装 Go、Node
 或任何构建工具链。到 [Releases](https://github.com/AhsokaTano26/NikuCooker/releases)

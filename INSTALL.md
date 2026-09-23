@@ -1,10 +1,9 @@
 # Installing NikuCooker
 
-**English** · [中文](INSTALL.zh-CN.md)
+[← Back to README](README.md) · **English** · [中文](INSTALL.zh-CN.md)
 
-How to install a **release binary** on Windows, macOS or Linux. For Docker, for
-building from source, and for what the program actually does, see the
-[README](README.md).
+How to install a **release binary** on Windows, macOS or Linux. Docker, building
+from source, and what the program actually does are all in the README.
 
 Every tagged release publishes a binary with the web interface already embedded
 in it, so there is no Go, Node or build toolchain to install. Take the archive
