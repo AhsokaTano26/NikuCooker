@@ -151,6 +151,13 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
+      # GoReleaser shells out to syft to catalog each archive, and a runner has
+      # no syft on it. Without this step the release builds every target, gets
+      # to the SBOM, and fails there — which is what the first tagged release
+      # did, two minutes in, with nothing published.
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
       # The Vue application is embedded into the binary by //go:embed, so it has
       # to be built before Go compiles — GoReleaser's own before-hooks do that.
       # Node and pnpm have to exist first, which is what the two steps above and
@@ -201,6 +208,13 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
+
+      # GoReleaser shells out to syft to catalog each archive, and a runner has
+      # no syft on it. Without this step the release builds every target, gets
+      # to the SBOM, and fails there — which is what the first tagged release
+      # did, two minutes in, with nothing published.
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
 
       - name: Validate the configuration
         uses: goreleaser/goreleaser-action@v7
