@@ -86,6 +86,18 @@ archives:
       - src: ai/nikucooker_ai/**/*.py
         dst: ai/nikucooker_ai
 
+      # The protocol fixtures. The worker derives its schema digest from them,
+      # and a worker whose digest does not match the core's refuses to handshake
+      # — so without these the binary in an archive is a decoder that cannot
+      # start a recogniser at all.
+      #
+      # The path is not decoration. schema.py resolves it as parents[3] of its
+      # own file, which is the archive root, so it has to sit at
+      # pkg/protocol/testdata beside ai/ — the same thing, and for the same
+      # reason, as the COPY in the Dockerfile.
+      - src: pkg/protocol/testdata/**/*
+        dst: pkg/protocol/testdata
+
       # The uv staged by the before-hook, one per target. {{ .Os }} and
       # {{ .Arch }} are per-archive, so one entry covers the matrix.
       - src: build/uv/{{ .Os }}_{{ .Arch }}/uv{{ if eq .Os "windows" }}.exe{{ end }}

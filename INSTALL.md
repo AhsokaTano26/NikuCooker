@@ -22,7 +22,8 @@ arm64 Windows stack in practice, and a binary that cannot find a worker is a
 promise we could not keep.
 
 **Keep the whole extracted folder together.** The archive contains a `nikucooker`
-binary, an `ai/` directory with the worker's source, and a copy of `uv`. The
+binary, an `ai/` directory with the worker's source, a copy of `uv`, and a
+`pkg/` directory of protocol fixtures the worker reads. The
 binary looks for those beside itself, and the environment it builds later
 records the absolute path it was built from — so moving the folder afterwards
 means installing again.

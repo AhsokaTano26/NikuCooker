@@ -89,6 +89,24 @@ for archive in $archives; do
 		failures=$((failures + 1))
 	fi
 
+	# --- the protocol fixtures --------------------------------------------
+	#
+	# Without these the worker cannot compute its schema digest, reports an
+	# empty one, and the handshake fails — the binary runs, the interface works,
+	# and nothing can be transcribed. It is invisible until a real run, which is
+	# why it is asserted here.
+	if [ ! -d "${dir}/pkg/protocol/testdata" ]; then
+		echo "    FAIL: no pkg/protocol/testdata; the worker cannot compute its schema digest"
+		failures=$((failures + 1))
+	elif [ "$(find "${dir}/pkg/protocol/testdata" -name '*.json' | wc -l | tr -d ' ')" -lt 2 ]; then
+		echo "    FAIL: pkg/protocol/testdata exists but holds fewer than two fixtures"
+		failures=$((failures + 1))
+	elif ! diff -r -q "${ROOT}/pkg/protocol/testdata" "${dir}/pkg/protocol/testdata" >/dev/null 2>&1; then
+		echo "    FAIL: the protocol fixtures differ from the repository's:"
+		diff -r -q "${ROOT}/pkg/protocol/testdata" "${dir}/pkg/protocol/testdata" 2>&1 | sed 's/^/      /' | head -10
+		failures=$((failures + 1))
+	fi
+
 	# --- the bundled uv ---------------------------------------------------
 	case "$name" in
 	*windows*) uv="uv.exe" ;;
