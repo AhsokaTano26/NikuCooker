@@ -311,8 +311,11 @@ func TestPhase6BurnsSubtitlesIntoThePicture(t *testing.T) {
 
 	buildFixture(t, videoPath)
 
-	// The same escaping the render stage applies.
-	filter := "subtitles=filename=" + escapeFilterPathForTest(assPath)
+	// The render stage's own escaping, imported rather than reimplemented: a
+	// second copy of rules this delicate is a copy that stops matching them,
+	// and the whole point of this test is that real FFmpeg accepts what the
+	// production code produces.
+	filter := "subtitles=filename=" + media.EscapeFilterPath(assPath)
 
 	burn := exec.Command(ffmpeg,
 		"-hide_banner", "-nostdin", "-y", "-loglevel", "error",
@@ -352,37 +355,6 @@ func ffmpegCanBurn(t *testing.T, ffmpeg string) bool {
 		}
 	}
 	return false
-}
-
-// escapeFilterPathForTest mirrors media.escapeFilterPath.
-//
-// Duplicated rather than exported, because the point of this test is to prove
-// the escaping works against real FFmpeg. Exporting the function under test and
-// calling it would prove nothing about FFmpeg's parser, which is what actually
-// has to accept the argument.
-func escapeFilterPathForTest(path string) string {
-	var b strings.Builder
-	for _, r := range path {
-		switch r {
-		case '\\':
-			b.WriteString(`\\`)
-		case '\'':
-			b.WriteString(`\'`)
-		case ':':
-			b.WriteString(`\:`)
-		case ',':
-			b.WriteString(`\,`)
-		case ';':
-			b.WriteString(`\;`)
-		case '[':
-			b.WriteString(`\[`)
-		case ']':
-			b.WriteString(`\]`)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // ---------------------------------------------------------------------------

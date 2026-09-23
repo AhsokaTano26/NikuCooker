@@ -633,7 +633,14 @@ def _importable(module: str) -> bool:
 
 
 def _rss_mb() -> float | None:
-    """Reports resident memory, where the platform makes it cheap to ask."""
+    """Reports resident memory, where the platform makes it cheap to ask.
+
+    Windows has no ``resource`` module at all, so there is no answer to give
+    there — the core reports the worker's footprint itself.
+    """
+    if sys.platform == "win32":
+        return None
+
     try:
         import resource
 

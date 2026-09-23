@@ -269,36 +269,55 @@ func RenderHardArgs(input, subtitlePath, output string, opts RenderOptions, enco
 func subtitleFilter(subtitlePath, fontsDir string) string {
 	var b strings.Builder
 	b.WriteString("subtitles=filename=")
-	b.WriteString(escapeFilterPath(subtitlePath))
+	b.WriteString(EscapeFilterPath(subtitlePath))
 
 	if fontsDir != "" {
 		b.WriteString(":fontsdir=")
-		b.WriteString(escapeFilterPath(fontsDir))
+		b.WriteString(EscapeFilterPath(fontsDir))
 	}
 	return b.String()
 }
 
-// escapeFilterPath prepares a path for use inside an FFmpeg filter argument.
+// EscapeFilterPath prepares a path for use inside an FFmpeg filter argument.
 //
 // This is a third escaping language, distinct from the shell's and from
 // FFmpeg's own option parser, and getting it wrong is silent: the filter either
 // fails with "No such file" for a file that plainly exists, or — worse on
 // Windows — reads the drive-letter colon as an option separator and renders
-// without subtitles.
+// without subtitles. That second one happened: this wrote `C\:\...` and FFmpeg
+// answered "No option name near '\Users\...'".
 //
-// The characters below are the ones the filtergraph parser treats as
-// structural. Backslash is handled in the same pass as everything else, so a
-// path that already contains one is not double-escaped.
-func escapeFilterPath(path string) string {
+// The rules below were read back from a real FFmpeg rather than derived. The
+// probe is the `movie` filter, which reports the path it received when it
+// cannot open it — so every rule here is a string that survived the parsers
+// intact, checked character for character:
+//
+//   - **The value is wrapped in single quotes.** Not decoration and not
+//     optional: a drive letter's colon cannot be passed any other way. Escaping
+//     it alone splits the argument at the colon; quoting it alone does the same;
+//     only both together deliver `C:\…`.
+//   - **Inside the quotes, one backslash is written as two**, and the same for
+//     the structural characters. One unescaping pass happens — the option
+//     parser's — and it costs one escape each. The quotes are what stop the
+//     graph parser from being a second pass.
+//
+// The one thing this cannot do is put an apostrophe in the value: FFmpeg's
+// tokeniser drops it *and the character after it*, quoted and escaped and bare
+// alike, and no arrangement of the two escaping levels produces one. Such a
+// path therefore fails to open, naming the file — worse than a correct render,
+// and much better than a silent render without subtitles.
+//
+// Exported because the burn-in test in tests/ builds the same argument, and a
+// second copy of rules this delicate is a copy that stops matching them.
+func EscapeFilterPath(path string) string {
 	var b strings.Builder
 	b.Grow(len(path) + 8)
+	b.WriteByte('\'')
 
 	for _, r := range path {
 		switch r {
 		case '\\':
 			b.WriteString(`\\`)
-		case '\'':
-			b.WriteString(`\'`)
 		case ':':
 			b.WriteString(`\:`)
 		case ',':
@@ -309,10 +328,17 @@ func escapeFilterPath(path string) string {
 			b.WriteString(`\[`)
 		case ']':
 			b.WriteString(`\]`)
+		case '\'':
+			// Ineffective, and kept for the reason in the comment above: the
+			// alternatives are dropping it silently at this layer or emitting
+			// it raw and closing the quote around it.
+			b.WriteString(`\'`)
 		default:
 			b.WriteRune(r)
 		}
 	}
+
+	b.WriteByte('\'')
 	return b.String()
 }
 

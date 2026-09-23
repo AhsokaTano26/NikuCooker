@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -72,6 +74,156 @@ func TestPathsSurviveAsSingleArguments(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The escaping rules, written down as the strings a real FFmpeg accepted.
+//
+// Each expectation was produced by handing the string to FFmpeg's `movie`
+// filter — which reports the path it received when it cannot open it — and
+// reading back what arrived. That is why they look odd: a backslash in the path
+// costs four, and the quotes are not decoration but the only way a drive
+// letter's colon gets through at all.
+//
+// The Windows case is tested on every platform. It is the one that broke, and
+// the failure was invisible on the machine the code was written on.
+func TestFilterPathsArriveIntact(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "plain unix path",
+			path: "/media/episode01.mkv",
+			want: `'/media/episode01.mkv'`,
+		},
+		{
+			name: "windows drive letter",
+			// The colon is the whole problem: unescaped, or escaped but
+			// unquoted, and FFmpeg splits the argument here.
+			path: `C:\Users\tano\output\subtitles.ass`,
+			want: `'C\:\\Users\\tano\\output\\subtitles.ass'`,
+		},
+		{
+			name: "commas and brackets",
+			// Structural to the filtergraph parser, and the reason the burn-in
+			// test builds a directory called "weird, dir [x]".
+			path: `/media/weird, dir [x]/subs.ass`,
+			want: `'/media/weird\, dir \[x\]/subs.ass'`,
+		},
+		{
+			name: "the rest of the grammar",
+			path: `/media/a;b/c.ass`,
+			want: `'/media/a\;b/c.ass'`,
+		},
+		{
+			name: "spaces are left alone",
+			path: `/media/My Subtitle File.ass`,
+			want: `'/media/My Subtitle File.ass'`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := EscapeFilterPath(test.path); got != test.want {
+				t.Errorf("EscapeFilterPath(%q)\n got  %s\n want %s", test.path, got, test.want)
+			}
+		})
+	}
+}
+
+// A path with an apostrophe cannot be represented, and this records that
+// rather than pretending otherwise. FFmpeg's tokeniser drops the character
+// however it is escaped — measured, not assumed — so the render fails with "no
+// such file", naming the file. Loud, and better than the alternative, which is
+// a quote closing the value early and corrupting everything after it.
+func TestFilterPathsQuoteAnApostropheWithoutClosingTheValue(t *testing.T) {
+	escaped := EscapeFilterPath(`/media/it's/subs.ass`)
+
+	if !strings.HasPrefix(escaped, "'") || !strings.HasSuffix(escaped, "'") {
+		t.Fatalf("the value is not quoted, which is how the colon gets through: %s", escaped)
+	}
+
+	// Only the two delimiters may be unescaped. A third would end the value
+	// early and hand the rest of the path back to the filtergraph parser.
+	unescaped := 0
+	for i := 0; i < len(escaped); i++ {
+		if escaped[i] != '\'' {
+			continue
+		}
+		if i > 0 && escaped[i-1] == '\\' {
+			continue
+		}
+		unescaped++
+	}
+	if unescaped != 2 {
+		t.Errorf("want exactly the two delimiters unescaped, found %d in %s", unescaped, escaped)
+	}
+}
+
+// The escaping, checked against FFmpeg itself rather than against a string the
+// test also computed.
+//
+// The unit test above pins the exact output; this one proves the output is what
+// the parser wanted. They are different claims and the second is the one that
+// was wrong: the escaping that broke CI looked perfectly reasonable, and only
+// FFmpeg could say otherwise.
+//
+// It reads the answer back out of an error message. FFmpeg's `movie` filter
+// reports the path it could not open, so feeding it a path that certainly does
+// not exist makes it print what the two parsers delivered. Brittle in the way
+// that any reading of a human-readable message is brittle — and worth it here,
+// because the alternative is a test that only runs where libass does, and the
+// platform this broke on is not one of them.
+func TestEscapeFilterPathSurvivesFFmpeg(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg is not installed")
+	}
+
+	// The path is the platform's own. On Windows that is a real `C:\…` with
+	// the drive letter that caused the failure; elsewhere it is a directory
+	// whose *name* imitates one, because a colon and a backslash are ordinary
+	// characters in a POSIX filename and the hazard is identical.
+	dir := t.TempDir()
+	if runtime.GOOS != "windows" {
+		dir = filepath.Join(dir, `C:\Users\tano\weird, dir [x]`)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	subtitle := filepath.Join(dir, "subs.ass")
+	if err := os.WriteFile(subtitle, []byte("not a video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	filter := "movie=filename=" + EscapeFilterPath(subtitle)
+	cmd := exec.Command(ffmpeg,
+		"-hide_banner", "-loglevel", "error",
+		"-f", "lavfi", "-i", "color=black:s=32x32:d=0.1",
+		"-vf", filter,
+		"-f", "null", "-")
+	output, _ := cmd.CombinedOutput()
+	text := string(output)
+
+	if strings.Contains(text, "No such filter") {
+		t.Skip("this FFmpeg has no movie filter")
+	}
+
+	const marker = "avformat_open_input '"
+	start := strings.Index(text, marker)
+	if start < 0 {
+		t.Fatalf("ffmpeg did not report the path it received, so this test cannot read it:\n  filter: %s\n%s",
+			filter, text)
+	}
+	delivered := text[start+len(marker):]
+	delivered = delivered[:strings.Index(delivered, "'")]
+
+	if delivered != subtitle {
+		t.Errorf("the path FFmpeg received is not the one it was given\n"+
+			"  filter:    %s\n  wanted:    %s\n  delivered: %s", filter, subtitle, delivered)
 	}
 }
 
