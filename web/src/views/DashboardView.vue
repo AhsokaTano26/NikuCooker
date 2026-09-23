@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 
 import { api } from '@/api/client'
 import AppButton from '@/components/AppButton.vue'
@@ -9,9 +9,28 @@ import { WORKER_LABEL, needsAttention } from '@/composables/workerStatus'
 import { useEventStore } from '@/stores/events'
 
 const events = useEventStore()
+const router = useRouter()
 const overview = useAsync(() => api.system.overview())
 
-onMounted(overview.run)
+let unsubscribers: (() => void)[] = []
+
+onMounted(() => {
+  overview.run()
+
+  // The environment check runs after the server starts listening, so a page
+  // loaded quickly sees `starting` and has to be told when that changes. The
+  // stream carries it; without this the warning would only appear after a
+  // reload, which is the one moment a user is not going to do.
+  unsubscribers.push(
+    events.on('worker.status', () => void overview.run()),
+    events.on('resync.required', () => void overview.run()),
+  )
+})
+
+onUnmounted(() => {
+  for (const off of unsubscribers) off()
+  unsubscribers = []
+})
 
 /**
  * Host statistics are pushed, not polled, so the figures move while a job runs
@@ -22,6 +41,34 @@ watch(() => events.resyncCount, overview.run)
 const counts = computed(() => overview.data.value?.counts)
 const stats = computed(() => overview.data.value?.stats)
 const worker = computed(() => overview.data.value?.worker)
+
+/**
+ * What to tell a user whose machine cannot transcribe.
+ *
+ * Two states call for an install — nothing was found, or something was found
+ * and it does not work — and they need different sentences, because the second
+ * one has an error to show and the first does not. `starting` deliberately
+ * produces nothing: an answer that has not arrived is not a problem to report.
+ */
+const environmentProblem = computed(() => {
+  const status = worker.value?.status
+  if (status === 'missing') {
+    return {
+      title: '还没有安装 AI 运行环境',
+      body: '语音识别需要它。安装会下载一个 Python 解释器和识别依赖，约 300 MB，只下载这一次。' +
+        '在此之前，项目、字幕编辑和翻译都能正常使用。',
+      action: '去安装',
+    }
+  }
+  if (status === 'failed') {
+    return {
+      title: 'AI 运行环境有问题',
+      body: '找到了解释器，但它加载不了识别组件。重新安装一次通常就能解决。',
+      action: '重新安装',
+    }
+  }
+  return null
+})
 
 const cards = computed(() => {
   const value = counts.value
@@ -43,6 +90,36 @@ function percent(value: number | null | undefined): string {
     <div v-if="overview.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-4">
       <p class="text-sm text-status-failed">{{ overview.error.value }}</p>
       <AppButton variant="ghost" size="sm" class="mt-2" @click="overview.run">重试</AppButton>
+    </div>
+
+    <!--
+      The environment check's verdict, when it is one the user has to act on.
+
+      On the dashboard rather than only on the System page, because the
+      dashboard is where someone lands. A machine that cannot transcribe should
+      say so at the first thing the user looks at, rather than on a page they
+      have to already know to open — which is the same reasoning as the check
+      itself running at startup rather than on demand.
+    -->
+    <div
+      v-if="environmentProblem"
+      class="rounded border border-status-warn/50 bg-surface-raised p-4"
+    >
+      <div class="flex items-start justify-between gap-4">
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-status-warn">{{ environmentProblem.title }}</p>
+          <p class="mt-1 text-sm text-ink-muted">{{ environmentProblem.body }}</p>
+          <p
+            v-if="worker?.detail"
+            class="mt-2 font-mono text-xs break-words text-ink-faint"
+          >
+            {{ worker.detail }}
+          </p>
+        </div>
+        <AppButton variant="primary" size="sm" @click="router.push('/system')">
+          {{ environmentProblem.action }}
+        </AppButton>
+      </div>
     </div>
 
     <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
