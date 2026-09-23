@@ -172,9 +172,15 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
             arch: amd64
+            # The scope ci.yml writes under, so a release reuses the layers the
+            # CI build already produced instead of starting from an empty
+            # cache every time. Deliberately not derived from the platform
+            # string, which would name a scope nothing else writes to.
+            cache_scope: runtime-cpu
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             arch: arm64
+            cache_scope: runtime-cpu-arm64
     steps:
       - uses: actions/checkout@v5
 
@@ -216,8 +222,8 @@ jobs:
             COMMIT=${{ github.sha }}
             CODE_REVISION=${{ github.sha }}
             BUILD_DATE=${{ steps.stamp.outputs.value }}
-          cache-from: type=gha,scope=runtime-cpu-${{ matrix.platform }}
-          cache-to: type=gha,scope=runtime-cpu-${{ matrix.platform }},mode=max
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,scope=${{ matrix.cache_scope }},mode=max
 
       - name: Export the digest
         run: |
