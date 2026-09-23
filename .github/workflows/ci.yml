@@ -108,7 +108,13 @@ jobs:
         if: runner.os == 'Linux'
         uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          # Pinned, which is what .golangci.yml says it is for: an unpinned
+          # linter set means a dependency upgrade can start failing CI for
+          # reasons unrelated to the change that triggered it. That is what
+          # `latest` did — a new release added rules, the job went red on a
+          # commit that had not touched Go, and the failure looked like the
+          # change's fault. Raise this deliberately, in its own commit.
+          version: v2.13.2
           args: --timeout=5m
 
   python:
@@ -124,6 +130,20 @@ jobs:
           # ceiling that moves without the whole matrix growing.
           - os: ubuntu-latest
             python: '3.14'
+    env:
+      # Every `uv run` below repeats the sync's flags, and it is not redundant.
+      #
+      # `uv run` re-syncs the environment to the project's own defaults before
+      # running anything: the interpreter from `.python-version`, and the
+      # default dependency set with no extras. So on the 3.14 leg it replaced
+      # the environment the step above had just built, dropped the dev group —
+      # and then failed to find ruff, which it had uninstalled a moment earlier.
+      #
+      # Naming the interpreter and the extras on each command is what keeps the
+      # environment the one this matrix asked for. (`--no-sync` is the other
+      # candidate and is worse: uv warns that the environment is incompatible
+      # and uses it anyway, so the 3.14 leg would quietly test 3.12.)
+      UV_RUN: uv run --frozen --extra dev --python ${{ matrix.python }}
     defaults:
       run:
         working-directory: ai
@@ -141,21 +161,21 @@ jobs:
         run: uv sync --frozen --extra dev --python ${{ matrix.python }}
 
       - name: Lint
-        run: uv run ruff check .
+        run: ${{ env.UV_RUN }} ruff check .
 
       - name: Format check
-        run: uv run ruff format --check .
+        run: ${{ env.UV_RUN }} ruff format --check .
 
       - name: Type check
-        run: uv run pyright
+        run: ${{ env.UV_RUN }} pyright
 
       - name: Test
-        run: uv run pytest
+        run: ${{ env.UV_RUN }} pytest
 
       - name: Self-check
         # Proves the entry point, the stdout discipline and the schema digest all
         # work in a clean environment on this platform.
-        run: uv run python -m nikucooker_ai --selfcheck
+        run: ${{ env.UV_RUN }} python -m nikucooker_ai --selfcheck
 
   web:
     name: Web
