@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/app"
 	"github.com/AhsokaTano26/NikuCooker/internal/artifact"
@@ -62,6 +63,9 @@ type Server struct {
 	commit  string
 
 	requestShutdown func()
+
+	previewMu sync.Mutex
+	previews  map[string]previewState
 }
 
 // New builds the API and returns its handler.
@@ -79,6 +83,7 @@ func New(opts Options) (*Server, error) {
 		version:         opts.Version,
 		commit:          opts.Commit,
 		requestShutdown: opts.RequestShutdown,
+		previews:        map[string]previewState{},
 	}
 	server.mux = server.buildRoutes()
 	return server, nil
@@ -124,6 +129,7 @@ func (s *Server) buildRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /api/v1/projects/{id}/segments/{segmentID}/split", s.splitSegment)
 	mux.HandleFunc("POST /api/v1/projects/{id}/segments/{segmentID}/merge", s.mergeSegment)
 	mux.HandleFunc("POST /api/v1/projects/{id}/segments/{segmentID}/translate", s.translateSegment)
+	mux.HandleFunc("POST /api/v1/projects/{id}/segments/bulk", s.bulkSegments)
 
 	// What the last run published, and the files themselves. This is where a
 	// finished project's results are, as opposed to the artifact cache they
@@ -134,6 +140,10 @@ func (s *Server) buildRoutes() *http.ServeMux {
 
 	mux.HandleFunc("GET /api/v1/projects/{id}/outputs", s.listOutputs)
 	mux.HandleFunc("GET /api/v1/projects/{id}/outputs/{name}", s.downloadOutput)
+	mux.HandleFunc("GET /api/v1/projects/{id}/media/source", s.streamSourceMedia)
+	mux.HandleFunc("GET /api/v1/projects/{id}/media/preview", s.getEditorPreview)
+	mux.HandleFunc("POST /api/v1/projects/{id}/media/preview", s.startEditorPreview)
+	mux.HandleFunc("GET /api/v1/projects/{id}/media/preview/file", s.streamEditorPreview)
 
 	// The current lines as a subtitle file, generated from the table rather
 	// than from an artifact — so it includes edits the user has not re-run the

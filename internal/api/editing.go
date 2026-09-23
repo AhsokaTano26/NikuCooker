@@ -2,6 +2,8 @@ package api
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -10,6 +12,132 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/segments"
 	"github.com/AhsokaTano26/NikuCooker/internal/subtitle"
 )
+
+type bulkSegmentsBody struct {
+	IDs    []string       `json:"ids"`
+	Action string         `json:"action"`
+	Params map[string]any `json:"params"`
+}
+
+type bulkSegmentFailure struct {
+	ID      string `json:"id"`
+	Code    string `json:"code"`
+	Message string `json:"message,omitempty"`
+}
+
+// bulkSegments applies independent review actions with partial-success
+// semantics. One line deleted in another tab must not discard the decisions
+// already made for the rest of the selection.
+func (s *Server) bulkSegments(w http.ResponseWriter, r *http.Request) {
+	projectID, apiErr := projectID(r)
+	if apiErr != nil {
+		s.fail(w, apiErr)
+		return
+	}
+	if _, err := s.app.Projects.Get(r.Context(), projectID); err != nil {
+		s.fail(w, classify(err))
+		return
+	}
+
+	var body bulkSegmentsBody
+	if apiErr := decode(r, &body); apiErr != nil {
+		s.fail(w, apiErr)
+		return
+	}
+	if len(body.IDs) == 0 || len(body.IDs) > 500 {
+		s.fail(w, Invalid("ids must contain between 1 and 500 segment ids"))
+		return
+	}
+	if !validBulkAction(body.Action) {
+		s.fail(w, Invalid("action must be approve, reject, pending, clear, retranslate, tag or untag"))
+		return
+	}
+
+	updated := 0
+	failed := make([]bulkSegmentFailure, 0)
+	for _, id := range body.IDs {
+		record, err := s.applyBulkSegmentAction(r, projectID, id, body)
+		if err != nil {
+			code := string(CodeInternal)
+			if errors.Is(err, segments.ErrNotFound) {
+				code = string(CodeNotFound)
+			} else if errors.Is(err, segments.ErrInvalid) {
+				code = string(CodeInvalid)
+			}
+			failed = append(failed, bulkSegmentFailure{ID: id, Code: code, Message: err.Error()})
+			continue
+		}
+		updated++
+		s.publishSegment(projectID, record)
+	}
+
+	s.respond(w, http.StatusOK, struct {
+		Updated int                  `json:"updated"`
+		Failed  []bulkSegmentFailure `json:"failed"`
+	}{Updated: updated, Failed: failed})
+}
+
+func validBulkAction(action string) bool {
+	switch action {
+	case "approve", "reject", "pending", "clear", "retranslate", "tag", "untag":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) applyBulkSegmentAction(
+	r *http.Request,
+	projectID string,
+	id string,
+	body bulkSegmentsBody,
+) (*segments.Record, error) {
+	switch body.Action {
+	case "approve":
+		return s.app.Segments.SetReviewState(r.Context(), projectID, id, segments.ReviewApproved, false)
+	case "reject":
+		return s.app.Segments.SetReviewState(r.Context(), projectID, id, segments.ReviewRejected, false)
+	case "pending":
+		return s.app.Segments.SetReviewState(r.Context(), projectID, id, segments.ReviewPending, true)
+	case "clear":
+		return s.app.Segments.SetReviewState(r.Context(), projectID, id, segments.ReviewNone, false)
+	case "retranslate":
+		return s.app.RetranslateLine(r.Context(), projectID, id, "")
+	case "tag", "untag":
+		tag, _ := body.Params["tag"].(string)
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			return nil, fmt.Errorf("%w: params.tag is required", segments.ErrInvalid)
+		}
+		record, err := s.app.Segments.Get(r.Context(), projectID, id)
+		if err != nil {
+			return nil, err
+		}
+		tags := append([]string(nil), record.Tags...)
+		found := false
+		for _, existing := range tags {
+			if existing == tag {
+				found = true
+				break
+			}
+		}
+		if body.Action == "tag" && !found {
+			tags = append(tags, tag)
+		}
+		if body.Action == "untag" && found {
+			filtered := tags[:0]
+			for _, existing := range tags {
+				if existing != tag {
+					filtered = append(filtered, existing)
+				}
+			}
+			tags = filtered
+		}
+		return s.app.Segments.Apply(r.Context(), projectID, id, segments.Edit{Tags: &tags})
+	default:
+		return nil, fmt.Errorf("%w: unsupported bulk action", segments.ErrInvalid)
+	}
+}
 
 // The editor's write endpoints.
 //

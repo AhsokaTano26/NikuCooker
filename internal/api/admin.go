@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/events"
+	"github.com/AhsokaTano26/NikuCooker/internal/models"
 	"github.com/AhsokaTano26/NikuCooker/internal/provider"
 )
 
@@ -25,9 +26,13 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	for _, record := range records {
 		views = append(views, modelView{
 			ID: record.ID, Name: record.Name, Kind: string(record.Kind),
-			Status:    string(record.Status),
+			Status:    modelStatusView(record.Status),
 			SizeBytes: record.SizeBytes, EstimatedBytes: record.ApproxBytes,
 			Progress: record.Progress, Note: record.Note,
+			Recommendation: record.Recommendation,
+			Accuracy:       record.Accuracy, Speed: record.Speed,
+			Hardware: record.Hardware, Language: record.Language,
+			Tags:         record.Tags,
 			ErrorMessage: record.ErrorMessage, InstalledAt: record.InstalledAt,
 		})
 	}
@@ -35,6 +40,13 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, http.StatusOK, struct {
 		Items []modelView `json:"items"`
 	}{Items: views})
+}
+
+func modelStatusView(status models.Status) string {
+	if status == models.StatusError {
+		return "failed"
+	}
+	return string(status)
 }
 
 // resolveModel accepts a bare name ("large-v3") or a full id ("asr:large-v3").

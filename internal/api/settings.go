@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	configcore "github.com/AhsokaTano26/NikuCooker/internal/config"
 	"github.com/AhsokaTano26/NikuCooker/internal/settings"
 )
 
@@ -32,6 +33,9 @@ type settingView struct {
 
 	// Value is the value in effect right now, after every layer.
 	Value any `json:"value"`
+	// DefaultValue is what a fresh installation uses, shown beside an override
+	// so the user can decide whether restoring it is safe.
+	DefaultValue any `json:"default_value"`
 
 	// Source names the layer that set it: "default", "config_file",
 	// "environment", "database", "project" or "cli".
@@ -122,18 +126,23 @@ func (s *Server) settingsResponse(r *http.Request) settingsView {
 		}
 	}
 
+	defaults := map[string]any{}
+	if document, err := configcore.Default().AsMap(); err == nil {
+		defaults = document
+	}
+
 	return settingsView{
 		Config:           config,
 		Provenance:       provenance,
 		DataDir:          s.app.DataDir(),
 		ConfigPath:       s.app.ConfigPath(),
 		ConfigFileExists: s.app.ConfigFileExists(),
-		Catalog:          catalogView(config, provenance, overridden),
+		Catalog:          catalogView(config, defaults, provenance, overridden),
 	}
 }
 
 // catalogView joins the catalog to the values in effect.
-func catalogView(config map[string]any, provenance map[string]string, overridden map[string]bool) []settingView {
+func catalogView(config, defaults map[string]any, provenance map[string]string, overridden map[string]bool) []settingView {
 	views := make([]settingView, 0, len(settings.Catalog))
 
 	for _, setting := range settings.Catalog {
@@ -143,22 +152,24 @@ func catalogView(config map[string]any, provenance map[string]string, overridden
 		}
 
 		value, _ := valueAt(config, setting.Key)
+		defaultValue, _ := valueAt(defaults, setting.Key)
 
 		views = append(views, settingView{
-			Key:        setting.Key,
-			Name:       setting.Name,
-			Help:       setting.Help,
-			Group:      setting.Group,
-			Kind:       string(setting.Kind),
-			Options:    options,
-			Unit:       setting.Unit,
-			Min:        setting.Min,
-			Max:        setting.Max,
-			Step:       setting.Step,
-			Advanced:   setting.Advanced,
-			Value:      value,
-			Source:     provenance[setting.Key],
-			Overridden: overridden[setting.Key],
+			Key:          setting.Key,
+			Name:         setting.Name,
+			Help:         setting.Help,
+			Group:        setting.Group,
+			Kind:         string(setting.Kind),
+			Options:      options,
+			Unit:         setting.Unit,
+			Min:          setting.Min,
+			Max:          setting.Max,
+			Step:         setting.Step,
+			Advanced:     setting.Advanced,
+			Value:        value,
+			DefaultValue: defaultValue,
+			Source:       provenance[setting.Key],
+			Overridden:   overridden[setting.Key],
 		})
 	}
 	return views

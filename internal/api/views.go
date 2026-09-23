@@ -330,6 +330,12 @@ type modelView struct {
 	EstimatedBytes int64      `json:"estimated_size_bytes,omitempty"`
 	Progress       float64    `json:"progress"`
 	Note           string     `json:"note,omitempty"`
+	Recommendation string     `json:"recommendation,omitempty"`
+	Accuracy       string     `json:"accuracy,omitempty"`
+	Speed          string     `json:"speed,omitempty"`
+	Hardware       string     `json:"hardware,omitempty"`
+	Language       string     `json:"language,omitempty"`
+	Tags           []string   `json:"tags,omitempty"`
 	ErrorMessage   string     `json:"error_message,omitempty"`
 	InstalledAt    *time.Time `json:"installed_at,omitempty"`
 }

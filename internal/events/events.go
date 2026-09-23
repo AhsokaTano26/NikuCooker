@@ -50,6 +50,7 @@ const (
 	TypeSettingsChanged Type = "settings.changed"
 
 	TypeModelProgress Type = "model.progress"
+	TypeMediaPreview  Type = "media.preview"
 	TypeLog           Type = "log"
 	TypeWorkerStatus  Type = "worker.status"
 	TypeSystemStats   Type = "system.stats"

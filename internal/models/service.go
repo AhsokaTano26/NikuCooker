@@ -53,8 +53,14 @@ type Record struct {
 
 	// ApproxBytes is what the catalog expects, so the UI can show what a
 	// download will cost before it starts.
-	ApproxBytes int64  `json:"estimated_size_bytes,omitempty"`
-	Note        string `json:"note,omitempty"`
+	ApproxBytes    int64    `json:"estimated_size_bytes,omitempty"`
+	Note           string   `json:"note,omitempty"`
+	Recommendation string   `json:"recommendation,omitempty"`
+	Accuracy       string   `json:"accuracy,omitempty"`
+	Speed          string   `json:"speed,omitempty"`
+	Hardware       string   `json:"hardware,omitempty"`
+	Language       string   `json:"language,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
 }
 
 // Service owns the model inventory.
@@ -159,12 +165,14 @@ func (s *Service) Scan(ctx context.Context) ([]Record, error) {
 	// the Python environment is. Recording it keeps the UI honest rather than
 	// showing an empty list next to a working VAD.
 	records = append(records, Record{
-		ID:       ID(KindVAD, "silero"),
-		Kind:     KindVAD,
-		Name:     "silero",
-		Provider: "silero-onnx",
-		Status:   StatusReady,
-		Note:     "Bundled with faster-whisper; nothing to download.",
+		ID:             ID(KindVAD, "silero"),
+		Kind:           KindVAD,
+		Name:           "silero",
+		Provider:       "silero-onnx",
+		Status:         StatusReady,
+		Note:           "随 faster-whisper 一起安装，用于找出音频中有人说话的区间，无需单独下载。",
+		Recommendation: "自动使用，无需选择", Speed: "很快",
+		Hardware: "CPU 即可", Language: "与语言无关", Tags: []string{"内置"},
 	})
 
 	return records, nil
@@ -173,13 +181,19 @@ func (s *Service) Scan(ctx context.Context) ([]Record, error) {
 // inspect checks one catalog entry against the filesystem.
 func (s *Service) inspect(entry Entry) Record {
 	record := Record{
-		ID:          ID(entry.Kind, entry.Name),
-		Kind:        entry.Kind,
-		Name:        entry.Name,
-		Provider:    entry.Provider,
-		Path:        s.Dir(entry.Kind, entry.Name),
-		ApproxBytes: entry.ApproxBytes,
-		Note:        entry.Note,
+		ID:             ID(entry.Kind, entry.Name),
+		Kind:           entry.Kind,
+		Name:           entry.Name,
+		Provider:       entry.Provider,
+		Path:           s.Dir(entry.Kind, entry.Name),
+		ApproxBytes:    entry.ApproxBytes,
+		Note:           entry.Note,
+		Recommendation: entry.Recommendation,
+		Accuracy:       entry.Accuracy,
+		Speed:          entry.Speed,
+		Hardware:       entry.Hardware,
+		Language:       entry.Language,
+		Tags:           append([]string(nil), entry.Tags...),
 	}
 
 	info, err := os.Stat(record.Path)

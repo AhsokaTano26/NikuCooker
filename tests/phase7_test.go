@@ -164,9 +164,100 @@ func (h *apiHarness) seedProject(name string) string {
 	return created.ID
 }
 
+// seedProjectWithSource creates a project whose source can be exercised by the
+// media endpoint. The bytes need not be a valid movie: HTTP range handling is
+// a file-serving contract and deliberately does not decode them.
+func (h *apiHarness) seedProjectWithSource(name, sourceName string, contents []byte) string {
+	h.t.Helper()
+
+	origin := filepath.Join(h.t.TempDir(), sourceName)
+	if err := os.WriteFile(origin, contents, 0o600); err != nil {
+		h.t.Fatalf("write source: %v", err)
+	}
+
+	created, err := h.app.Projects.Create(context.Background(), project.CreateRequest{
+		Name:           name,
+		SourceLanguage: "ja",
+		TargetLanguage: "zh-Hans",
+		Style:          "fansub",
+		SourceName:     sourceName,
+		SourceOrigin:   origin,
+	})
+	if err != nil {
+		h.t.Fatalf("seed project with source: %v", err)
+	}
+	return created.ID
+}
+
 // ---------------------------------------------------------------------------
 // The envelope
 // ---------------------------------------------------------------------------
+
+func TestPhase7SourceMediaStreamsInlineAndSupportsRanges(t *testing.T) {
+	h := newAPIHarness(t)
+	projectID := h.seedProjectWithSource("editor media", "片段.mp4", []byte("0123456789"))
+
+	request, err := http.NewRequest(http.MethodGet,
+		h.server.URL+"/api/v1/projects/"+projectID+"/media/source", nil)
+	if err != nil {
+		t.Fatalf("build media request: %v", err)
+	}
+	request.Header.Set("Range", "bytes=2-5")
+
+	response, err := h.server.Client().Do(request)
+	if err != nil {
+		t.Fatalf("get media: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	got, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusPartialContent {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusPartialContent)
+	}
+	if string(got) != "2345" {
+		t.Errorf("body = %q, want %q", got, "2345")
+	}
+	if disposition := response.Header.Get("Content-Disposition"); !strings.HasPrefix(disposition, "inline;") {
+		t.Errorf("Content-Disposition = %q, want inline", disposition)
+	}
+	if contentType := response.Header.Get("Content-Type"); contentType != "video/mp4" {
+		t.Errorf("Content-Type = %q, want video/mp4", contentType)
+	}
+}
+
+func TestPhase7EditorPreviewDescribesDirectAndProxyMedia(t *testing.T) {
+	h := newAPIHarness(t)
+
+	mp4ID := h.seedProjectWithSource("direct media", "source.mp4", []byte("mp4"))
+	status, body, raw := h.request(http.MethodGet,
+		"/api/v1/projects/"+mp4ID+"/media/preview", nil)
+	if status != http.StatusOK {
+		t.Fatalf("direct status = %d, body: %s", status, raw)
+	}
+	if body["status"] != "missing" || body["direct_playback"] != true || body["media_kind"] != "video" {
+		t.Errorf("direct preview view = %#v", body)
+	}
+
+	mkvID := h.seedProjectWithSource("proxy media", "source.mkv", []byte("mkv"))
+	status, body, raw = h.request(http.MethodGet,
+		"/api/v1/projects/"+mkvID+"/media/preview", nil)
+	if status != http.StatusOK {
+		t.Fatalf("proxy status = %d, body: %s", status, raw)
+	}
+	if body["direct_playback"] != false {
+		t.Errorf("mkv direct_playback = %#v, want false", body["direct_playback"])
+	}
+
+	audioID := h.seedProjectWithSource("audio media", "source.flac", []byte("flac"))
+	status, body, raw = h.request(http.MethodGet,
+		"/api/v1/projects/"+audioID+"/media/preview", nil)
+	if status != http.StatusOK {
+		t.Fatalf("audio status = %d, body: %s", status, raw)
+	}
+	if body["media_kind"] != "audio" {
+		t.Errorf("audio media_kind = %#v, want audio", body["media_kind"])
+	}
+}
 
 // Every failure must carry a stable code, and the status must match the code.
 func TestPhase7ErrorEnvelope(t *testing.T) {
@@ -630,6 +721,54 @@ func TestPhase7SegmentsAndFindingsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPhase7BulkReviewReportsPartialSuccess(t *testing.T) {
+	h := newAPIHarness(t)
+	ctx := context.Background()
+	projectID := h.seedProject("bulk review")
+
+	set := &subtitle.Set{
+		SourceLanguage: "ja",
+		TargetLanguage: "zh-Hans",
+		Segments: []*subtitle.Segment{
+			{ID: "seg_0001", Start: 0, End: 2, SourceText: "一", Tags: []string{}, NeedsReview: true},
+			{ID: "seg_0002", Start: 2, End: 4, SourceText: "二", Tags: []string{}, NeedsReview: true},
+		},
+	}
+	if err := h.app.Segments.ReplaceFromArtifacts(ctx, projectID, set, segments.Lineage{}); err != nil {
+		t.Fatal(err)
+	}
+
+	first := segments.DeriveID(projectID, 1)
+	second := segments.DeriveID(projectID, 2)
+	status, body, raw := h.request(http.MethodPost,
+		"/api/v1/projects/"+projectID+"/segments/bulk",
+		map[string]any{
+			"ids":    []string{first, "seg_missing", second},
+			"action": "approve",
+			"params": map[string]any{},
+		})
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %s", status, raw)
+	}
+	if body["updated"] != float64(2) {
+		t.Errorf("updated = %#v, want 2", body["updated"])
+	}
+	failed, _ := body["failed"].([]any)
+	if len(failed) != 1 {
+		t.Fatalf("failed = %#v, want one item", body["failed"])
+	}
+
+	for _, id := range []string{first, second} {
+		record, err := h.app.Segments.Get(ctx, projectID, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record.ReviewState != segments.ReviewApproved || record.NeedsReview {
+			t.Errorf("segment %s = state %q, needs_review %v", id, record.ReviewState, record.NeedsReview)
+		}
+	}
+}
+
 // A line's review state must survive a re-run.
 //
 // This is the property that makes the editor usable at all: a re-run after an
@@ -912,6 +1051,27 @@ func TestPhase7SettingsReportProvenance(t *testing.T) {
 	// And something nobody set must be attributed to the defaults.
 	if got := provenance["log.level"]; got != "default" {
 		t.Errorf("log.level came from %v, want default", got)
+	}
+
+	// The editable catalog carries both values so the form can always show what
+	// is effective now and what "restore default" would actually choose.
+	catalog, ok := body["catalog"].([]any)
+	if !ok || len(catalog) == 0 {
+		t.Fatalf("settings carries no editable catalog: %s", raw)
+	}
+	var model map[string]any
+	for _, item := range catalog {
+		candidate, _ := item.(map[string]any)
+		if candidate["key"] == "asr.model" {
+			model = candidate
+			break
+		}
+	}
+	if model == nil {
+		t.Fatalf("catalog does not contain asr.model: %s", raw)
+	}
+	if model["value"] == nil || model["default_value"] == nil {
+		t.Errorf("asr.model does not expose current and default values: %#v", model)
 	}
 }
 
