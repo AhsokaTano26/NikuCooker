@@ -10,7 +10,12 @@ name: nikucooker
 
 services:
   nikucooker:
-    image: ghcr.io/ahsokatano26/nikucooker:cpu-0.1.0
+    # Published by .github/workflows/release.yml on every version tag, for
+    # amd64 and arm64. `latest` so that pulling is always the newest release;
+    # pin a version instead if you want the file to decide, rather than the
+    # registry. The build: section below still works — `docker compose up
+    # --build` uses it and ignores this.
+    image: tano26/nikucooker:latest
     build:
       context: .
       target: runtime-cpu
@@ -55,7 +60,10 @@ services:
 
   nikucooker-cuda:
     profiles: ["cuda"]
-    image: ghcr.io/ahsokatano26/nikucooker:cuda-0.1.0
+    # Not published anywhere: the CUDA image is several gigabytes and only a
+    # release worth publishing on its own would be worth that upload. Built
+    # locally — `docker compose --profile cuda up --build`, or `make docker-cuda`.
+    image: nikucooker:cuda
     build:
       context: .
       target: runtime-cuda
