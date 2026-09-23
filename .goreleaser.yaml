@@ -64,28 +64,35 @@ archives:
       # rather than as documentation that lives elsewhere.
       - INSTALL.md
 
-      # The AI worker's source, so that the first-run install has something to
-      # install into. Listed file by file rather than as ai/**/* because the
-      # tree carries a .venv, __pycache__ and test caches that must not ship —
-      # a virtual environment bakes in the builder's absolute paths.
+      # --- the AI worker's source -------------------------------------------
       #
-      # scripts/verify-archive.sh compares the extracted ai/ against the
-      # repository's whole tree, because a silently flattened or truncated
-      # copy looks fine in a listing and cannot import its own package.
-      - src: ai/pyproject.toml
-        dst: ai/
-      - src: ai/uv.lock
-        dst: ai/
+      # Plain paths, not src/dst mappings. A mapping whose `src` names a single
+      # file resolves its destination to the `dst` string itself and drops the
+      # file name, so four files written that way all claim one name and only
+      # the first survives — with no warning. That is how an archive shipped
+      # without a pyproject.toml in it.
+      - ai/pyproject.toml
+      - ai/uv.lock
       # pyproject.toml declares it, and uv builds the project itself before
       # syncing dependencies — without it, hatchling fails with "Readme file
       # does not exist".
-      - src: ai/README.md
-        dst: ai/
-      - src: ai/.python-version
-        dst: ai/
+      - ai/README.md
+      - ai/.python-version
+
+      # The package, in two entries rather than one `**/*.py`: `**` in this
+      # glob requires a directory in between, so `a/**/*.py` matches `a/b/c.py`
+      # and not `a/c.py`. One entry shipped the subpackages and none of the
+      # modules beside them — no worker.py, no __main__.py, an install that
+      # could not run.
+      - ai/nikucooker_ai/*.py
+      # Recursive, and matching only `.py`, because the alternative — listing
+      # the directory — brings the __pycache__ trees with it, and a bytecode
+      # cache in an archive bakes in the builder's absolute paths.
       - src: ai/nikucooker_ai/**/*.py
         dst: ai/nikucooker_ai
 
+      # --- what the worker reads at runtime ----------------------------------
+      #
       # The protocol fixtures. The worker derives its schema digest from them,
       # and a worker whose digest does not match the core's refuses to handshake
       # — so without these the binary in an archive is a decoder that cannot
@@ -94,13 +101,19 @@ archives:
       # The path is not decoration. schema.py resolves it as parents[3] of its
       # own file, which is the archive root, so it has to sit at
       # pkg/protocol/testdata beside ai/ and nothing else will do.
-      - src: pkg/protocol/testdata/**/*
-        dst: pkg/protocol/testdata
+      - pkg/protocol/testdata
 
-      # The uv staged by the before-hook, one per target. {{ .Os }} and
-      # {{ .Arch }} are per-archive, so one entry covers the matrix.
+      # --- the installer ------------------------------------------------------
+      #
+      # The uv staged by the before-hook, one per target.
+      #
+      # `src` is templated per archive and `dst` is not — `dst: uv{{ if eq .Os
+      # "windows" }}.exe{{ end }}` produced a file with those braces still in
+      # its name — so the destination is expressed by stripping the parent
+      # instead: the file lands at the archive root under its own name, `uv` or
+      # `uv.exe`, which is where the binary looks for it.
       - src: build/uv/{{ .Os }}_{{ .Arch }}/uv{{ if eq .Os "windows" }}.exe{{ end }}
-        dst: .
+        strip_parent: true
 
 checksum:
   name_template: checksums.txt

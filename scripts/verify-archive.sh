@@ -72,20 +72,25 @@ for archive in $archives; do
 		fi
 	done
 
-	# The rest of the comparison is whole-tree. tests/ is not shipped — the
-	# archive is not a development tree — so it is removed from both sides
-	# rather than only one, and the caches are removed from the reference
-	# because a checkout has them.
-	reference="${work}/reference-ai"
-	rm -rf "$reference"
-	cp -R "${ROOT}/ai" "$reference"
-	for skip in .venv __pycache__ .pytest_cache .ruff_cache .mypy_cache tests; do
-		rm -rf "${reference}/${skip}" "${dir}/ai/${skip}"
-	done
+	# The rest of the comparison is a set comparison against what git tracks.
+	#
+	# Not against the working copy, which is what this used to do and why it
+	# failed here first: a checkout carries bytecode caches, a virtual
+	# environment and whatever a stray command left behind, and every one of
+	# those becomes a difference from an archive that is right to omit them.
+	#
+	# tests/ is excluded rather than shipped — the archive is not a development
+	# tree, and the first-run install does not run them.
+	want="${work}/ai-wanted.txt"
+	got="${work}/ai-archived.txt"
 
-	if [ "$forbidden" -eq 0 ] && ! diff -r -q "$reference" "${dir}/ai" >/dev/null 2>&1; then
-		echo "    FAIL: ai/ in the archive differs from the repository:"
-		diff -r -q "$reference" "${dir}/ai" 2>&1 | sed 's/^/      /' | head -20
+	git -C "$ROOT" ls-files -- ai | grep -v '^ai/tests/' | sort > "$want"
+	(cd "${dir}" && find ai -type f | sort) > "$got"
+
+	if ! cmp -s "$want" "$got"; then
+		# "<" is what the archive is missing, ">" is what it has and should not.
+		echo "    FAIL: ai/ in the archive is not the tracked tree:"
+		diff "$want" "$got" 2>&1 | sed 's/^/      /' | head -20
 		failures=$((failures + 1))
 	fi
 
