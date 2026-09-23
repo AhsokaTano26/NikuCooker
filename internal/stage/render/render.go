@@ -96,6 +96,13 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 	if err != nil {
 		return nil, err
 	}
+	modes, capabilityWarnings, err := supportedModes(modes, caps)
+	if err != nil {
+		return nil, err
+	}
+	for _, warning := range capabilityWarnings {
+		env.Log.Warn(warning)
+	}
 
 	subtitleDir, err := env.Artifacts.Dir(env.Inputs["subtitle"])
 	if err != nil {
@@ -104,7 +111,7 @@ func (s *Stage) Run(ctx context.Context, env *stage.Env) (*stage.Result, error) 
 
 	subtitleLines := 0
 	outputs := make([]outputRecord, 0, len(modes))
-	warnings := []string{}
+	warnings := append([]string(nil), capabilityWarnings...)
 
 	for i, mode := range modes {
 		outputName := outputName(base, mode)
@@ -268,19 +275,39 @@ func (s *Stage) capabilities(
 		return nil, nil
 	}
 
-	// Not every FFmpeg build has libass, and a user whose does not deserves to
-	// be told which setting to change rather than shown "No such filter:
-	// 'subtitles'", which reads as a bug in this program.
-	//
-	// Refused before anything is encoded: the alternative is a burn that runs to
-	// completion and then reports a missing filter, having already spent however
-	// long it takes to re-encode the whole film.
-	if !caps.CanBurnSubtitles() {
-		return nil, errors.New(
+	return caps, nil
+}
+
+// supportedModes removes an unavailable optional output without discarding a
+// supported output requested alongside it.
+//
+// A nil capability report means probing failed, not that the filter is absent;
+// in that case the render is attempted so FFmpeg can return the authoritative
+// error. When hard is the only requested mode, substituting soft would violate
+// the request, so that remains an actionable failure.
+func supportedModes(
+	modes []media.RenderMode,
+	caps *media.Capabilities,
+) ([]media.RenderMode, []string, error) {
+	if caps == nil || caps.CanBurnSubtitles() {
+		return modes, nil, nil
+	}
+
+	supported := make([]media.RenderMode, 0, len(modes))
+	for _, mode := range modes {
+		if mode != media.RenderHard {
+			supported = append(supported, mode)
+		}
+	}
+	if len(supported) == 0 {
+		return nil, nil, errors.New(
 			"render: this FFmpeg was built without libass, so it cannot draw subtitles into video; " +
 				"drop hard from render.modes, or install an FFmpeg built with --enable-libass")
 	}
-	return caps, nil
+
+	return supported, []string{
+		"hard subtitles were skipped because this FFmpeg was built without libass; the soft-subtitle output was created instead",
+	}, nil
 }
 
 // options builds the render settings. `caps` is nil when nothing needed probing.
