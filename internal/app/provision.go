@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -49,7 +50,16 @@ func (a *App) StartProvision(onProgress func(provision.Progress)) error {
 
 	go func() {
 		<-finished
-		if a.provision.State().Status == provision.StatusReady {
+
+		// Re-checked whether it succeeded or not: on success the answer has
+		// changed, and on failure the check is what tells the interface whether
+		// anything was left behind. Without this the page would report what was
+		// true before the install — "missing" over an environment that now
+		// works, which reads as the button having done nothing.
+		status := a.checkEnvironment(context.WithoutCancel(context.Background()))
+		a.publishEnvironment(status)
+
+		if status.State == EnvironmentReady {
 			a.InvalidateWorker()
 		}
 	}()

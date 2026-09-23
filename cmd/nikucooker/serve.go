@@ -107,6 +107,13 @@ install or point at. The API lives under /api/v1 on the same origin.`,
 			stopMaintenance := application.StartMaintenance(ctx)
 			defer stopMaintenance()
 
+			// Whether this installation can transcribe at all, answered in the
+			// background and announced on the event stream. A user who cannot
+			// run a job should not have to open the right page to find out why,
+			// and the interface has to be usable before the answer arrives —
+			// the check spawns Python, and it does not always resolve quickly.
+			application.StartEnvironmentCheck(ctx)
+
 			return srv.ListenAndServe(ctx)
 		},
 	}

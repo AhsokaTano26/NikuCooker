@@ -177,6 +177,20 @@ func candidates(aiDir, runtimeDir string) []string {
 	return append(found, "python3", "python")
 }
 
+// CheckImport reports whether an interpreter can import the worker package.
+//
+// Separate from ResolvePython because the two failures need different answers.
+// "No interpreter at all" means there is nothing to run and something has to be
+// installed; "this interpreter cannot import the package" means one exists and
+// is broken. A search that skips both reports the same error for each, and the
+// advice for one is wrong for the other.
+func CheckImport(ctx context.Context, python, aiDir string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = pythonProbeTimeout
+	}
+	return runProbe(ctx, python, aiDir, "import nikucooker_ai", timeout)
+}
+
 // verify checks that an interpreter runs and optionally that it can import the
 // worker.
 func verify(ctx context.Context, path string, opts ResolveOptions) error {

@@ -5,6 +5,7 @@ import { RouterLink } from 'vue-router'
 import { api } from '@/api/client'
 import AppButton from '@/components/AppButton.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
+import { WORKER_LABEL, needsAttention } from '@/composables/workerStatus'
 import { useEventStore } from '@/stores/events'
 
 const events = useEventStore()
@@ -110,7 +111,11 @@ function percent(value: number | null | undefined): string {
               worker is idle" from the absence of an event would be wrong every
               time the stream dropped.
             -->
-            <dd>{{ worker?.status ?? '—' }}</dd>
+            <dd
+              :class="needsAttention(worker?.status) ? 'text-status-failed' : ''"
+            >
+              {{ worker ? WORKER_LABEL[worker.status] : '—' }}
+            </dd>
           </div>
           <div class="flex justify-between gap-4">
             <dt class="shrink-0 text-ink-muted">解释器</dt>

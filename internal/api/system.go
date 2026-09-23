@@ -59,6 +59,25 @@ func (s *Server) fillRuntime(view *runtimeView) {
 	view.Available, view.Reason = s.app.ProvisioningAvailable()
 	view.Status = string(provision.StatusIdle)
 
+	// Installing is offered only when the startup check found something to fix.
+	//
+	// "No environment has been provisioned" is not that finding. A checkout with
+	// a working ai/.venv, and a machine whose ai.python is set, both transcribe
+	// perfectly and have never been provisioned — offering them a 300 MB
+	// download would be answering a question nobody asked, and the download is
+	// the kind of thing a user notices.
+	if view.Available {
+		if state := s.app.Environment(); !state.NeedsInstall() {
+			view.Available = false
+			switch state.State {
+			case app.EnvironmentReady:
+				view.Reason = "the AI environment is installed and working; nothing to do"
+			default:
+				view.Reason = "the AI environment is being checked"
+			}
+		}
+	}
+
 	if view.RuntimeDir != "" {
 		python := platform.RuntimeVenvPython(view.RuntimeDir)
 		if _, err := os.Stat(python); err == nil {
@@ -160,16 +179,19 @@ func (s *Server) fillCounts(ctx context.Context, counts *systemCounts) {
 }
 
 func (s *Server) fillWorker(ctx context.Context, view *workerView) {
-	// The status is reported without starting a worker. A dashboard that
-	// spawned a Python process to answer a status query would be making the
-	// thing it was reporting on.
-	view.Status = "stopped"
+	// No worker process is started, and no interpreter is spawned to answer
+	// this: the answer comes from the check the server ran at startup, which is
+	// also what the event stream carries. A dashboard that spawned Python to
+	// answer a status query would be making the thing it was reporting on, and
+	// one that re-probed on every request would do it once per open tab.
+	status := s.app.Environment()
+
+	view.Status = string(status.State)
 	view.Workers = 0
 	view.LoadedModels = []loadedModelView{}
+	view.Python = status.Python
+	view.Detail = status.Detail
 
-	if python, err := s.app.ResolvePython(ctx); err == nil {
-		view.Python = python
-	}
 	if digest, err := protocol.SchemaDigest(); err == nil {
 		view.SchemaDigest = digest
 	}

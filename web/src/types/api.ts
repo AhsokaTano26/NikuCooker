@@ -184,7 +184,26 @@ export interface QCSummary {
 // System
 // ---------------------------------------------------------------------------
 
-export type WorkerStatus = 'starting' | 'ready' | 'busy' | 'crashed' | 'failed' | 'stopped'
+/**
+ * What the startup check found about the AI environment.
+ *
+ * `missing` and `failed` are the two that call for an install: nothing
+ * resolved, or something resolved and could not import the worker package.
+ * `ready` means this installation can transcribe, whether or not an
+ * environment was ever provisioned — a checkout with ai/.venv has not been,
+ * and needs nothing.
+ *
+ * `busy` and `crashed` describe a worker process, and are not produced by the
+ * check.
+ */
+export type WorkerStatus =
+  | 'starting'
+  | 'ready'
+  | 'busy'
+  | 'crashed'
+  | 'failed'
+  | 'missing'
+  | 'stopped'
 
 export interface LoadedModel {
   name: string
@@ -209,6 +228,8 @@ export interface SystemOverview {
     status: WorkerStatus
     workers: number
     python: string
+    /** Why it is not ready, when it is not, in the search's own words. */
+    detail?: string
     worker_version: string
     /** Reported by the worker and compared against the core's own. A mismatch
      *  means the two sides disagree about data shapes and the core refuses to

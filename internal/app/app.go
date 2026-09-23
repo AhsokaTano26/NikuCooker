@@ -171,6 +171,12 @@ type App struct {
 	retired []*worker.Pool
 
 	provision *provision.Manager
+
+	// What the startup check found about the worker environment. Read on every
+	// /system request, written once by the check, so it is guarded.
+	environmentOnce sync.Once
+	environmentMu   sync.Mutex
+	environment     *EnvironmentStatus
 }
 
 // workerSlot is one attempt at resolving an interpreter and building a pool.

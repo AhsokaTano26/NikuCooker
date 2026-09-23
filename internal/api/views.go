@@ -181,9 +181,18 @@ type systemCounts struct {
 }
 
 type workerView struct {
+	// Status is the startup check's answer: starting, ready, missing or failed.
+	//
+	// It describes whether this installation can transcribe, not whether a
+	// process happens to be running — the pool is lazy, so "no worker process"
+	// is the normal state and says nothing a user needs.
 	Status  string `json:"status"`
 	Workers int    `json:"workers"`
 	Python  string `json:"python"`
+
+	// Detail is why, when it is not ready, in the search's or the interpreter's
+	// own words.
+	Detail string `json:"detail,omitempty"`
 
 	WorkerVersion string `json:"worker_version"`
 	SchemaDigest  string `json:"schema_digest"`

@@ -5,6 +5,7 @@ import { ApiError, api } from '@/api/client'
 import AppButton from '@/components/AppButton.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
+import { WORKER_LABEL, needsAttention } from '@/composables/workerStatus'
 import type { RuntimePhase } from '@/types/api'
 
 const events = useEventStore()
@@ -19,6 +20,23 @@ watch(() => events.resyncCount, overview.run)
 const worker = computed(() => overview.data.value?.worker)
 const stats = computed(() => overview.data.value?.stats)
 const runtime = computed(() => overview.data.value?.runtime)
+
+/**
+ * Whether the environment card has anything useful to say.
+ *
+ * Two cases, and nothing else. There is something to install, so the server
+ * says it can be installed; or there is nothing to install and the worker is
+ * not usable, in which case the reason is the useful part and hiding the card
+ * would leave the problem unexplained.
+ */
+const showRuntime = computed(() => {
+  const state = runtime.value
+  if (state === undefined) return false
+  if (state.available) return true
+
+  const status = worker.value?.status
+  return status === 'missing' || status === 'failed'
+})
 
 /**
  * The four steps, with where the install has got to.
@@ -171,7 +189,11 @@ async function shutdown(): Promise<void> {
         <dl class="mt-3 space-y-2 text-sm">
           <div class="flex justify-between gap-4">
             <dt class="shrink-0 text-ink-muted">状态</dt>
-            <dd>{{ worker?.status ?? '—' }} · {{ worker?.workers ?? 0 }} 个进程</dd>
+            <dd
+              :class="needsAttention(worker?.status) ? 'text-status-failed' : ''"
+            >
+              {{ worker ? WORKER_LABEL[worker.status] : '—' }}
+            </dd>
           </div>
           <div class="flex justify-between gap-4">
             <dt class="shrink-0 text-ink-muted">解释器</dt>
@@ -184,6 +206,13 @@ async function shutdown(): Promise<void> {
             </dd>
           </div>
         </dl>
+        <p
+          v-if="worker?.detail"
+          class="mt-3 rounded border border-status-warn/40 bg-surface p-3 text-xs text-status-warn"
+        >
+          {{ worker.detail }}
+        </p>
+
         <p class="mt-3 border-t border-line pt-3 text-xs text-ink-faint">
           协议摘要由 Go 与 Python 各自从同一组 fixture 计算得出，握手时逐字比较。
           两边不一致时服务拒绝启动，而不是在中途把消息解释错。
@@ -192,15 +221,18 @@ async function shutdown(): Promise<void> {
         <!--
           Installing the environment the worker runs from.
 
-          Shown when it can be done here, and also when it cannot but the worker
-          has no interpreter — that is exactly when the reason is the useful
-          part, and hiding the whole card then would leave a user with a
-          disabled pipeline and no explanation.
+          Shown when the startup check found something to fix — which the server
+          decides, in `runtime.available`. It is not shown merely because no
+          environment has been provisioned: a checkout with a working ai/.venv
+          transcribes perfectly and has never been provisioned, and offering it
+          a 300 MB download would be answering a question nobody asked.
+
+          When it is not offered but the worker is unusable, the card appears
+          anyway with the reason instead of a button. Hiding it then would leave
+          a user with a pipeline that cannot run and nothing on screen saying
+          why.
         -->
-        <div
-          v-if="runtime && (runtime.available || !worker?.python)"
-          class="mt-3 border-t border-line pt-3"
-        >
+        <div v-if="runtime && showRuntime" class="mt-3 border-t border-line pt-3">
           <p class="text-xs text-ink-faint">运行环境</p>
 
           <template v-if="runtime.status === 'running'">
@@ -239,15 +271,6 @@ async function shutdown(): Promise<void> {
             <AppButton class="mt-3" size="sm" variant="primary" @click="install">
               重新安装
             </AppButton>
-          </template>
-
-          <template v-else-if="runtime.provisioned">
-            <p class="mt-1 text-sm text-ink-muted">
-              已安装，不会再下载一次。
-            </p>
-            <p class="mt-1 truncate font-mono text-xs text-ink-faint" :title="runtime.python">
-              {{ runtime.python }}
-            </p>
           </template>
 
           <template v-else-if="runtime.available">

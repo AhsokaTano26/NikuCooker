@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/AhsokaTano26/NikuCooker/internal/app"
 	"github.com/AhsokaTano26/NikuCooker/internal/events"
 	"github.com/AhsokaTano26/NikuCooker/internal/provision"
 )
@@ -15,6 +16,20 @@ import (
 func (s *Server) provisionRuntime(w http.ResponseWriter, r *http.Request) {
 	if ok, reason := s.app.ProvisioningAvailable(); !ok {
 		s.fail(w, Failed(http.StatusPreconditionFailed, CodeUnavailable, reason))
+		return
+	}
+
+	// Only when the check found something missing. The interface does not offer
+	// the button otherwise, and a request that arrives anyway is answered with
+	// the reason rather than with several hundred megabytes of download.
+	if state := s.app.Environment(); !state.NeedsInstall() {
+		if state.State == app.EnvironmentReady {
+			s.fail(w, conflict(CodeConflict,
+				"the AI environment is already installed and working; "+
+					"delete the runtime directory and start again to replace it"))
+			return
+		}
+		s.fail(w, conflict(CodeConflict, "the AI environment is still being checked"))
 		return
 	}
 
