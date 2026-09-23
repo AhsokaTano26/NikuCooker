@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { ApiError, api } from '@/api/client'
 import AppButton from '@/components/AppButton.vue'
+import AppBadge from '@/components/AppBadge.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
 import { useEventStore, type ServerEvent } from '@/stores/events'
 import type { ModelRecord, ModelStatus } from '@/api/client'
@@ -106,7 +107,14 @@ const STATUS_TONE: Record<ModelStatus, string> = {
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div class="mx-auto max-w-5xl space-y-4">
+    <section class="rounded border border-accent/40 bg-surface-raised p-4">
+      <h2 class="text-sm font-medium">不知道选哪个？先用 medium</h2>
+      <p class="mt-1 text-sm text-ink-muted">
+        medium 是日语字幕的日常推荐，准确度和速度比较均衡。tiny 只用来快速试通流程；
+        large-v3 适合追求最终精度且愿意等待的任务；distil-large-v3 偏英语，不建议日语项目使用。
+      </p>
+    </section>
     <div class="flex flex-wrap items-center justify-between gap-3">
       <p class="text-sm text-ink-muted">
         已安装模型占用 <span class="tabular-nums text-ink">{{ formatBytes(usedBytes) }}</span>
@@ -139,6 +147,9 @@ const STATUS_TONE: Record<ModelStatus, string> = {
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-baseline gap-2">
               <span class="font-mono text-sm">{{ model.name }}</span>
+              <AppBadge v-for="tag in model.tags ?? []" :key="tag" :tone="tag.includes('推荐') || tag === '默认' ? 'accent' : 'neutral'">
+                {{ tag }}
+              </AppBadge>
               <span class="text-xs" :class="STATUS_TONE[model.status]">
                 {{ STATUS_LABEL[model.status] }}
               </span>
@@ -149,7 +160,25 @@ const STATUS_TONE: Record<ModelStatus, string> = {
               </span>
             </div>
 
-            <p v-if="model.note" class="mt-1 text-xs text-ink-faint">{{ model.note }}</p>
+            <p v-if="model.note" class="mt-2 text-sm leading-6 text-ink-muted">{{ model.note }}</p>
+            <dl v-if="model.kind === 'asr'" class="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-xs lg:grid-cols-4">
+              <div>
+                <dt class="text-ink-faint">适合</dt>
+                <dd class="mt-0.5 text-ink-muted">{{ model.recommendation }}</dd>
+              </div>
+              <div>
+                <dt class="text-ink-faint">精度 / 速度</dt>
+                <dd class="mt-0.5 text-ink-muted">{{ model.accuracy }} / {{ model.speed }}</dd>
+              </div>
+              <div>
+                <dt class="text-ink-faint">硬件建议</dt>
+                <dd class="mt-0.5 text-ink-muted">{{ model.hardware }}</dd>
+              </div>
+              <div>
+                <dt class="text-ink-faint">语言</dt>
+                <dd class="mt-0.5 text-ink-muted">{{ model.language }}</dd>
+              </div>
+            </dl>
             <p v-if="model.error_message" class="mt-1 text-xs text-status-failed">
               {{ model.error_message }}
             </p>

@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import { computed, onMounted } from 'vue'
+import { RouterLink } from 'vue-router'
+
+import { api } from '@/api/client'
+import AppBadge from '@/components/AppBadge.vue'
+import { useAsync } from '@/composables/useAsync'
+
 /**
  * The manual, in the application.
  *
@@ -123,43 +130,97 @@ const problems: Problem[] = [
       '项目页的「磁盘占用」列出四类文件各占多少，中间产物通常最大且可以随时删掉重算。「设置 → 清理」里可以配置按天数自动删除旧项目和旧日志。',
   },
 ]
+
+const system = useAsync(() => api.system.overview())
+const models = useAsync(() => api.models.list())
+const providers = useAsync(() => api.providers.list())
+const projects = useAsync(() => api.projects.list({ limit: 1 }))
+
+const readyModel = computed(() => models.data.value?.items.some((model) => model.kind === 'asr' && model.status === 'ready') ?? false)
+const readyProvider = computed(() => providers.data.value?.items.some((provider) => provider.enabled && provider.has_key) ?? false)
+const reviewComplete = computed(
+  () =>
+    projects.data.value?.items.some(
+      (project) => project.segment_count > 0 && project.needs_review_count === 0,
+    ) ?? false,
+)
+
+const starterSteps = computed(() => [
+  {
+    number: 1, title: '检查运行环境',
+    description: '确认 FFmpeg、Python 和识别 Worker 可以使用。缺少环境时，系统页会提供安装入口。',
+    to: '/system', action: '检查系统', done: system.data.value?.worker.status === 'ready',
+  },
+  {
+    number: 2, title: '配置翻译服务',
+    description: '添加一个 OpenAI 兼容端点、模型和密钥，然后先点一次连接测试。',
+    to: '/providers', action: '配置翻译服务', done: readyProvider.value,
+  },
+  {
+    number: 3, title: '准备识别模型',
+    description: '第一次建议选择 medium；只想确认流程时可先下载 tiny。',
+    to: '/models', action: '选择模型', done: readyModel.value,
+  },
+  {
+    number: 4, title: '创建第一个项目',
+    description: '上传视频，确认日语到简体中文和翻译风格，然后创建项目。',
+    to: '/projects/new', action: '新建项目', done: (projects.data.value?.total ?? 0) > 0,
+  },
+  {
+    number: 5, title: '运行处理任务',
+    description: '进入项目后点击“运行”。页面会说明当前阶段、缓存命中和失败原因。',
+    to: '/projects', action: '打开项目', done: (system.data.value?.counts.segments ?? 0) > 0,
+  },
+  {
+    number: 6, title: '审校并导出',
+    description: '在项目页进入审校工作台，播放原片、修改字幕、处理质量问题，再重新运行生成成品。',
+    to: '/projects', action: '去审校', done: reviewComplete.value,
+  },
+])
+
+onMounted(() => {
+  void Promise.all([system.run(), models.run(), providers.run(), projects.run()])
+})
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="mx-auto max-w-5xl space-y-6">
     <section class="rounded border border-line bg-surface-raised p-4">
-      <h2 class="text-sm font-medium text-ink-muted">五分钟跑通</h2>
-      <ol class="mt-3 space-y-2 text-sm text-ink-muted">
-        <li>
-          <span class="text-ink">1. 配好翻译服务。</span>
-          这是唯一必须自己配的东西。到「翻译服务」页面填一个 OpenAI 兼容的端点。
-        </li>
-        <li>
-          <span class="text-ink">2. 建项目。</span>
-          在「新建项目」页把视频拖进去。文件会复制进项目目录，所以之后移动或删除原文件都不影响它。
-        </li>
-        <li>
-          <span class="text-ink">3. 运行。</span>
-          项目页点运行，跑完整条流水线。中途可以随时取消，已经算完的阶段会留在缓存里。
-        </li>
-        <li>
-          <span class="text-ink">4. 看结果。</span>
-          跑完在项目页顶部列出成品：SRT、ASS、带字幕的视频，都能直接下载。
-        </li>
-        <li>
-          <span class="text-ink">5. 改不满意的行。</span>
-          在字幕编辑页改过的行不会被之后的运行覆盖。改完重跑，只会重翻你动过的那几行。
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-base font-medium">第一次使用：按顺序完成这六步</h2>
+          <p class="mt-1 text-sm text-ink-muted">每一步都能直接跳到对应页面；“已完成”根据这台机器的当前状态判断。</p>
+        </div>
+        <AppBadge tone="accent">新手路线</AppBadge>
+      </div>
+
+      <ol class="mt-4 grid gap-3 md:grid-cols-2">
+        <li v-for="step in starterSteps" :key="step.number" class="rounded border border-line bg-surface p-4">
+          <div class="flex items-center gap-2">
+            <span class="flex size-6 items-center justify-center rounded-full bg-surface-sunken text-xs tabular-nums">{{ step.number }}</span>
+            <h3 class="text-sm font-medium">{{ step.title }}</h3>
+            <AppBadge
+              class="ml-auto"
+              :data-test="step.done ? 'starter-step-done' : undefined"
+              :tone="step.done ? 'done' : 'neutral'"
+            >
+              {{ step.done ? '已完成' : '待完成' }}
+            </AppBadge>
+          </div>
+          <p class="mt-2 min-h-10 text-xs leading-5 text-ink-muted">{{ step.description }}</p>
+          <RouterLink
+            :to="step.to"
+            class="mt-3 inline-flex rounded border border-line px-3 py-1.5 text-xs text-ink-muted outline-none hover:border-accent hover:text-ink focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            {{ step.action }} →
+          </RouterLink>
         </li>
       </ol>
-      <p class="mt-3 border-t border-line pt-3 text-xs text-ink-faint">
-        还没确认这台机器能不能干这活？命令行跑一次 <span class="font-mono">nikucooker doctor</span>，
-        它会逐项报告缺什么、怎么补。
-      </p>
-      <p class="mt-2 text-xs text-ink-faint">
-        <span class="font-mono">nikucooker serve</span> 启动成功后会自己打开这个页面。
-        不想让它打开就加 <span class="font-mono">--open=false</span>；
-        在没有桌面环境的机器上（比如一台服务器）它本来就不会打开，也不会报错。
-      </p>
+
+      <div class="mt-4 rounded border border-line bg-surface-sunken p-3 text-xs leading-5 text-ink-muted">
+        <strong class="text-ink">最省心的首次组合：</strong>
+        medium 模型 + 默认字幕组风格 + 软字幕。先用一段短视频跑通，确认字幕可用后再处理长片。
+      </div>
     </section>
 
     <section class="rounded border border-line bg-surface-raised p-4">

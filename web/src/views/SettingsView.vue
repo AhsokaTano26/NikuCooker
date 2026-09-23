@@ -7,6 +7,11 @@ import AppButton from '@/components/AppButton.vue'
 import AppCheckbox from '@/components/AppCheckbox.vue'
 import AppInput from '@/components/AppInput.vue'
 import AppSelect from '@/components/AppSelect.vue'
+import {
+  editableSettingValue,
+  settingDisplayValue,
+  settingValueChanged,
+} from '@/composables/settings'
 import { useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
 
@@ -36,7 +41,7 @@ const catalog = computed(() => settings.data.value?.catalog ?? [])
 function reseed(): void {
   const next: Record<string, unknown> = {}
   for (const setting of catalog.value) {
-    next[setting.key] = editableOf(setting, setting.value)
+    next[setting.key] = editableSettingValue(setting, setting.value)
   }
   draft.value = next
 }
@@ -59,15 +64,6 @@ const unsubscribers: (() => void)[] = []
 onBeforeUnmount(() => {
   for (const unsubscribe of unsubscribers) unsubscribe()
 })
-
-/** Turns a stored value into what a control holds: a list becomes text. */
-function editableOf(setting: SettingDescriptor, value: unknown): unknown {
-  if (setting.kind === 'list') {
-    return Array.isArray(value) ? value.join(',') : String(value ?? '')
-  }
-  if (value === null || value === undefined) return ''
-  return value
-}
 
 /** Whether a fixed list currently contains a member. */
 function listHas(setting: SettingDescriptor, value: string): boolean {
@@ -111,22 +107,7 @@ function payloadOf(setting: SettingDescriptor, value: unknown): unknown {
 
 /** Whether a control's value differs from what is in effect. */
 function isChanged(setting: SettingDescriptor): boolean {
-  const draftValue = draft.value[setting.key]
-  if (draftValue === undefined) return false
-
-  if (setting.kind === 'list') {
-    const current = Array.isArray(setting.value) ? setting.value.map(String).join(',') : ''
-    return String(draftValue) !== current
-  }
-  if (setting.kind === 'int' || setting.kind === 'float' || setting.kind === 'bytes') {
-    // The control holds text; the server holds a number. Comparing the two
-    // without this would mark every numeric field as changed on load.
-    const a = Number(draftValue)
-    const b = Number(setting.value)
-    if (Number.isNaN(a) && Number.isNaN(b)) return false
-    return a !== b
-  }
-  return draftValue !== setting.value
+  return settingValueChanged(setting, draft.value[setting.key])
 }
 
 const changedKeys = computed(() => catalog.value.filter(isChanged).map((setting) => setting.key))
@@ -157,6 +138,16 @@ const groups = computed(() => {
 })
 
 const advancedCount = computed(() => catalog.value.filter((setting) => setting.advanced).length)
+
+function discardChanges(): void {
+  reseed()
+  notice.value = '已放弃未保存的修改'
+  actionError.value = null
+}
+
+function cannotWin(setting: SettingDescriptor): boolean {
+  return ['environment', 'project', 'cli'].includes(setting.source)
+}
 
 async function save(): Promise<void> {
   if (changedKeys.value.length === 0) return
@@ -294,11 +285,18 @@ watch(settings.data, (value) => {
       <!-- Filter and the advanced toggle, then Save. Pinned to the top of the
            form because the save control is what everything above it is for,
            and on a long page it would otherwise be a scroll away. -->
-      <div class="flex flex-wrap items-center gap-3">
+      <div class="sticky top-0 z-10 -mx-2 flex flex-wrap items-center gap-3 rounded border border-line bg-surface/95 p-2 shadow-sm backdrop-blur">
         <div class="min-w-56 flex-1">
           <AppInput v-model="filter" type="search" placeholder="筛选，例如 模型 或 asr" />
         </div>
         <AppCheckbox v-model="showAdvanced" :label="`高级（${advancedCount}）`" />
+        <AppButton
+          v-if="changedKeys.length > 0"
+          variant="ghost"
+          @click="discardChanges"
+        >
+          放弃修改
+        </AppButton>
         <AppButton
           variant="primary"
           :disabled="changedKeys.length === 0 || saving"
@@ -335,6 +333,17 @@ watch(settings.data, (value) => {
               </div>
 
               <p class="mt-1 text-xs text-ink-faint">{{ setting.help }}</p>
+              <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                <span class="text-ink-muted">
+                  当前生效：<strong class="font-medium text-ink">{{ settingDisplayValue(setting, setting.value) }}</strong>
+                </span>
+                <span class="text-ink-faint">
+                  默认：{{ settingDisplayValue(setting, setting.default_value) }}
+                </span>
+              </div>
+              <p v-if="cannotWin(setting)" class="mt-1 text-xs text-status-warn">
+                当前值来自{{ SOURCE_LABEL[setting.source] ?? setting.source }}，优先级高于网页；保存后仍可能不会成为最终值。
+              </p>
               <p class="mt-0.5 font-mono text-xs text-ink-faint">{{ setting.key }}</p>
             </div>
 
