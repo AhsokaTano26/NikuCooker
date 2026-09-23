@@ -32,11 +32,14 @@ withDefaults(
     id: undefined,
   },
 )
+
+const model = defineModel<string>({ default: '' })
 </script>
 
 <template>
   <input
     :id="id"
+    v-model="model"
     :type="type"
     :disabled="disabled"
     :placeholder="placeholder"

@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 
-import { ApiError, api, type Upload, type UploadHandle } from '@/api/client'
+import { ApiError, api } from '@/api/client'
 import AppButton from '@/components/AppButton.vue'
 import AppInput from '@/components/AppInput.vue'
 import AppRadio from '@/components/AppRadio.vue'
 import AppSelect from '@/components/AppSelect.vue'
 import { useAsync, formatBytes } from '@/composables/useAsync'
 import type { TranslationStyle } from '@/types/api'
+import { useUploadStore } from '@/stores/upload'
 
 const router = useRouter()
 
@@ -40,16 +42,13 @@ onMounted(() => {
 // Upload
 // ---------------------------------------------------------------------------
 
-const file = ref<File | null>(null)
-const uploaded = ref<Upload | null>(null)
-const progress = ref(0)
-const uploading = ref(false)
-const uploadError = ref<string | null>(null)
+const uploadSession = useUploadStore()
+const { file, uploaded, progress, uploading, error: uploadError } = storeToRefs(uploadSession)
+if (uploaded.value && name.value.trim() === '') {
+  name.value = uploaded.value.name.replace(/\.[^.]+$/, '')
+}
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
-
-/** The in-flight request, so it can be aborted rather than waited out. */
-let handle: UploadHandle | null = null
 
 async function chooseFiles(files: FileList | null): Promise<void> {
   const picked = files?.[0]
@@ -58,66 +57,17 @@ async function chooseFiles(files: FileList | null): Promise<void> {
 }
 
 async function beginUpload(picked: File): Promise<void> {
-  uploadError.value = null
-
-  // Checked here so a file the server would refuse is refused before twenty
-  // gigabytes cross the network. The server checks it again — this is a
-  // courtesy, not the limit.
-  const limit = maxUploadBytes.value
-  if (limit > 0 && picked.size > limit) {
-    uploadError.value = `「${picked.name}」有 ${formatBytes(picked.size)}，超过服务端上限 ${formatBytes(limit)}。`
-    return
-  }
-
-  await discardCurrent()
-
-  file.value = picked
-  uploaded.value = null
-  progress.value = 0
-  uploading.value = true
-
   // The project is named after the video unless the user has already said
   // otherwise. Most media filenames are already what someone would have typed.
   if (name.value.trim() === '') {
     name.value = picked.name.replace(/\.[^.]+$/, '')
   }
 
-  const request = api.uploads.create(picked, (fraction) => {
-    progress.value = fraction
-  })
-  handle = request
-
-  try {
-    uploaded.value = await request.promise
-  } catch (cause) {
-    // A cancelled upload is not an error to report: the user asked for it.
-    if (!(cause instanceof ApiError && cause.code === 'REQUEST_ABORTED')) {
-      uploadError.value = cause instanceof Error ? cause.message : String(cause)
-    }
-    file.value = null
-  } finally {
-    uploading.value = false
-    handle = null
-  }
+  await uploadSession.begin(picked, maxUploadBytes.value)
 }
 
 function cancelUpload(): void {
-  handle?.abort()
-}
-
-/** Throws away whatever is currently staged, on the server as well as here. */
-async function discardCurrent(): Promise<void> {
-  const current = uploaded.value
-  uploaded.value = null
-  file.value = null
-  progress.value = 0
-
-  if (current) {
-    // A failure here leaves a file that the sweep will collect. It is not worth
-    // an error message: the user is replacing it, and the replacement is what
-    // they care about.
-    await api.uploads.discard(current.id).catch(() => {})
-  }
+  uploadSession.cancel()
 }
 
 function onDrop(event: DragEvent): void {
@@ -132,13 +82,6 @@ function onFileInput(event: Event): void {
   // what a user does after a fixable failure.
   input.value = ''
 }
-
-onBeforeUnmount(() => {
-  // Only the transfer is cancelled. A completed upload is left on the server:
-  // navigating away and coming back is a normal way to use this page, and
-  // discarding the file would make the user send it again.
-  handle?.abort()
-})
 
 // ---------------------------------------------------------------------------
 // Submit
@@ -175,7 +118,7 @@ async function submit(): Promise<void> {
     })
     // The staged file has been moved into the project, so there is nothing left
     // to discard.
-    uploaded.value = null
+    uploadSession.consume()
     await router.push(`/projects/${created.id}`)
   } catch (cause) {
     if (cause instanceof ApiError) {
@@ -184,7 +127,7 @@ async function submit(): Promise<void> {
       // Sending the user back to the picker is more useful than leaving them
       // pressing a button that cannot succeed.
       if (cause.code === 'NOT_FOUND' && mode.value === 'upload') {
-        uploaded.value = null
+        uploadSession.consume()
       }
     } else {
       error.value = cause instanceof Error ? cause.message : String(cause)
@@ -257,6 +200,7 @@ const SOURCE_MODES = [
       <!-- Upload -->
       <div v-if="mode === 'upload'" class="mt-2">
         <input
+          id="source-upload"
           ref="fileInput"
           type="file"
           class="hidden"
@@ -264,8 +208,9 @@ const SOURCE_MODES = [
           @change="onFileInput"
         />
 
-        <div
+        <button
           v-if="!uploaded && !uploading"
+          type="button"
           class="flex cursor-pointer flex-col items-center gap-2 rounded border border-dashed p-6 text-center transition"
           :class="dragging ? 'border-accent bg-surface-raised' : 'border-line hover:border-ink-faint'"
           @click="fileInput?.click()"
@@ -277,7 +222,7 @@ const SOURCE_MODES = [
           <span v-if="maxUploadBytes > 0" class="text-xs text-ink-faint">
             上限 {{ formatBytes(maxUploadBytes) }}。文件会被复制进项目目录。
           </span>
-        </div>
+        </button>
 
         <div v-else-if="uploading" class="space-y-2 rounded border border-line p-4">
           <div class="flex items-center justify-between gap-3 text-sm">
@@ -358,6 +303,7 @@ const SOURCE_MODES = [
           v-for="option in STYLES"
           :key="option.value"
           v-model="style"
+          name="translation-style"
           :value="option.value"
           :label="option.label"
           :hint="option.hint"

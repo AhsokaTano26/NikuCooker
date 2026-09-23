@@ -17,7 +17,9 @@ import { nextTick } from 'vue'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import AppCheckbox from './AppCheckbox.vue'
+import AppInput from './AppInput.vue'
 import AppSelect from './AppSelect.vue'
+import AppTextarea from './AppTextarea.vue'
 
 // jsdom has neither of these, and the dropdown scrolls its highlight into
 // view on every move.
@@ -224,5 +226,23 @@ describe('AppCheckbox', () => {
     const wrapper = mount(AppCheckbox, { props: { modelValue: false, disabled: true } })
 
     expect(wrapper.get('input[type="checkbox"]').attributes('disabled')).toBeDefined()
+  })
+})
+
+describe('text controls', () => {
+  it('shows the current input value and emits edits', async () => {
+    const wrapper = mount(AppInput, { props: { modelValue: 'medium' } })
+    expect(wrapper.get('input').element.value).toBe('medium')
+
+    await wrapper.get('input').setValue('large-v3')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['large-v3'])
+  })
+
+  it('shows the current textarea value and emits edits', async () => {
+    const wrapper = mount(AppTextarea, { props: { modelValue: '已有译文' } })
+    expect(wrapper.get('textarea').element.value).toBe('已有译文')
+
+    await wrapper.get('textarea').setValue('修改后的译文')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['修改后的译文'])
   })
 })

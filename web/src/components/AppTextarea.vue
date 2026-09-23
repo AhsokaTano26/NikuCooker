@@ -13,10 +13,13 @@ withDefaults(defineProps<{ rows?: number; disabled?: boolean; placeholder?: stri
   disabled: false,
   placeholder: '',
 })
+
+const model = defineModel<string>({ default: '' })
 </script>
 
 <template>
   <textarea
+    v-model="model"
     :rows="rows"
     :disabled="disabled"
     :placeholder="placeholder"

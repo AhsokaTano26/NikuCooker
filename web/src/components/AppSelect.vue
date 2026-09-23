@@ -23,8 +23,9 @@ const props = withDefaults(
     disabled?: boolean
     placeholder?: string
     id?: string
+    ariaLabel?: string
   }>(),
-  { disabled: false, placeholder: '请选择', id: undefined },
+  { disabled: false, placeholder: '请选择', id: undefined, ariaLabel: undefined },
 )
 
 const model = defineModel<string>({ default: '' })
@@ -208,6 +209,8 @@ onBeforeUnmount(closeList)
       role="combobox"
       :aria-expanded="open"
       :aria-controls="id ? `${id}-listbox` : undefined"
+      :aria-label="ariaLabel"
+      :aria-activedescendant="open && id && activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined"
       :disabled="disabled"
       aria-haspopup="listbox"
       class="flex w-full items-center justify-between gap-2 rounded border border-line bg-surface px-2 py-1.5 text-left text-sm text-ink outline-none transition hover:border-ink-faint focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
@@ -253,6 +256,7 @@ onBeforeUnmount(closeList)
       >
         <div
           v-for="(option, index) in options"
+          :id="id ? `${id}-option-${index}` : undefined"
           :key="option.value"
           :data-index="index"
           role="option"

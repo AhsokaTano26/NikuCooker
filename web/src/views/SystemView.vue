@@ -317,12 +317,14 @@ async function shutdown(): Promise<void> {
               <div class="mt-2 space-y-2">
                 <AppRadio
                   v-model="device"
+                  name="runtime-device"
                   value="cpu"
                   label="CPU"
                   hint="任何机器都能跑。识别速度取决于处理器，Apple 芯片也只能走这条路。"
                 />
                 <AppRadio
                   v-model="device"
+                  name="runtime-device"
                   value="cuda"
                   :disabled="!runtime.cuda.available"
                   :label="`NVIDIA 显卡${runtime.cuda.gpus.length > 0 ? `（${runtime.cuda.gpus.join('、')}）` : ''}`"

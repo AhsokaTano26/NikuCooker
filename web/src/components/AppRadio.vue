@@ -17,6 +17,7 @@ defineProps<{
   label: string
   hint?: string
   disabled?: boolean
+  name?: string
 }>()
 
 const model = defineModel<string>({ required: true })
@@ -35,6 +36,7 @@ const model = defineModel<string>({ required: true })
       <input
         v-model="model"
         type="radio"
+        :name="name"
         :value="value"
         :disabled="disabled"
         class="peer absolute inset-0 size-4 cursor-pointer appearance-none rounded-full border border-line bg-surface transition checked:border-accent hover:border-ink-faint focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"

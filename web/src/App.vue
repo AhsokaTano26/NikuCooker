@@ -104,7 +104,12 @@ onBeforeUnmount(() => {
         which is what made it look broken rather than deliberate.
       -->
       <main class="min-h-0 flex-1 overflow-auto px-8 py-6">
-        <RouterView />
+        <div
+          class="h-full"
+          :class="route.name === 'subtitle-editor' ? 'max-w-none' : 'mx-auto max-w-7xl'"
+        >
+          <RouterView />
+        </div>
       </main>
     </div>
   </div>
