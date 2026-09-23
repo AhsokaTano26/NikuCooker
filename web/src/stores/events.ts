@@ -74,7 +74,13 @@ export const EVENT_TYPES = [
   'segment.updated',
   'segments.replaced',
   'qc.updated',
-  'model.download.progress',
+  // The name the server actually emits. This list is what gets registered with
+  // addEventListener, so a name that does not match is a listener that never
+  // fires — which is what happened here: this said 'model.download.progress'
+  // while the server sent 'model.progress', and a multi-gigabyte download
+  // reported no progress at all, silently.
+  'model.progress',
+  'runtime.provision',
   'model.status',
   'worker.status',
   'system.stats',

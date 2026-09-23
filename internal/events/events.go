@@ -53,6 +53,14 @@ const (
 	TypeLog           Type = "log"
 	TypeWorkerStatus  Type = "worker.status"
 	TypeSystemStats   Type = "system.stats"
+
+	// TypeRuntimeProvision announces a phase of the first-run install of the
+	// AI environment.
+	//
+	// Named for the thing, not for progress: the payload carries a phase and a
+	// status, and a name promising a fraction would invite someone to fill in
+	// one that the installer cannot honestly produce.
+	TypeRuntimeProvision Type = "runtime.provision"
 )
 
 // Event is the envelope every client receives.
