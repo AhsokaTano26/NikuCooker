@@ -28,12 +28,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Empty on purpose: CPU wheels are the default resolution, and the Docker CPU
-# image selects this extra explicitly so the two images differ by name rather
-# than by an unstated default.
-cpu = []
 # cuDNN is NOT listed. CTranslate2 4.8.2 wheels are built with -DWITH_CUDNN=OFF,
 # so only cuBLAS is needed. See docs/dependency-audit.md §1.
+#
+# Selecting this costs around 700 MB and only works where those wheels exist —
+# Linux and Windows, not macOS, which uv reports as "doesn't have a source
+# distribution or wheel for the current platform". A plain `uv sync` is the CPU
+# set, which is what every machine gets unless someone asks for more.
 cuda = ["nvidia-cublas-cu12>=12,<13"]
 # The only GPU-accelerated ASR path on Apple Silicon, since CTranslate2 has no
 # Metal backend. Scheduled for a later phase; declared now so the boundary is

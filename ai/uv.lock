@@ -453,7 +453,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9" },
 ]
-provides-extras = ["cpu", "cuda", "mlx", "dev"]
+provides-extras = ["cuda", "mlx", "dev"]
 
 [[package]]
 name = "nodeenv"
