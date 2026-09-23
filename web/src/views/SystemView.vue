@@ -312,25 +312,27 @@ async function shutdown(): Promise<void> {
               is present and refuses to move is the thing this avoids, and the
               line is visible on most machines rather than only on failures.
             -->
-            <fieldset class="mt-3 space-y-2">
+            <fieldset class="mt-3">
               <legend class="text-xs text-ink-faint">计算设备</legend>
-              <AppRadio
-                v-model="device"
-                value="cpu"
-                label="CPU"
-                hint="任何机器都能跑。识别速度取决于处理器，Apple 芯片也只能走这条路。"
-              />
-              <AppRadio
-                v-model="device"
-                value="cuda"
-                :disabled="!runtime.cuda.available"
-                :label="`NVIDIA 显卡${runtime.cuda.gpus.length > 0 ? `（${runtime.cuda.gpus.join('、')}）` : ''}`"
-                :hint="
-                  runtime.cuda.available
-                    ? `快得多，代价是多下载约 ${formatBytes(runtime.cuda.extra_bytes)} 的 NVIDIA 计算库。装好后自动启用，不用改配置。`
-                    : cudaReason(runtime.cuda.reason_code)
-                "
-              />
+              <div class="mt-2 space-y-2">
+                <AppRadio
+                  v-model="device"
+                  value="cpu"
+                  label="CPU"
+                  hint="任何机器都能跑。识别速度取决于处理器，Apple 芯片也只能走这条路。"
+                />
+                <AppRadio
+                  v-model="device"
+                  value="cuda"
+                  :disabled="!runtime.cuda.available"
+                  :label="`NVIDIA 显卡${runtime.cuda.gpus.length > 0 ? `（${runtime.cuda.gpus.join('、')}）` : ''}`"
+                  :hint="
+                    runtime.cuda.available
+                      ? `快得多，代价是多下载约 ${formatBytes(runtime.cuda.extra_bytes)} 的 NVIDIA 计算库。装好后自动启用，不用改配置。`
+                      : cudaReason(runtime.cuda.reason_code)
+                  "
+                />
+              </div>
             </fieldset>
 
             <AppButton class="mt-3" size="sm" variant="primary" @click="install">
