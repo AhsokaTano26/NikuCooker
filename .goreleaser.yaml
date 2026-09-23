@@ -54,6 +54,10 @@ archives:
     files:
       - LICENSE
       - README.md
+      # Shipped because README.md points at it. A pointer to a file that is not
+      # in the archive is worse than no pointer: it reads as a missing file
+      # rather than as documentation that lives elsewhere.
+      - INSTALL.md
 
 checksum:
   name_template: checksums.txt
