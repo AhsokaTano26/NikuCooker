@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -39,41 +41,75 @@ func workerRepoRoot(t *testing.T) string {
 }
 
 // pythonForTests returns the project virtualenv's interpreter, or skips.
+//
+// The search is done once per test binary. Each candidate probe runs the
+// worker's own self-check, which imports ctranslate2 and onnxruntime from a
+// cold filesystem — seconds, and the same seconds for every test that asks.
 func pythonForTests(t *testing.T) string {
 	t.Helper()
 
-	root := workerRepoRoot(t)
+	pythonOnce.Do(func() { pythonPath, pythonWhy = findPythonForTests() })
+	if pythonPath == "" {
+		t.Skipf("no AI worker environment: %s; run `make ai-install` first", pythonWhy)
+	}
+	return pythonPath
+}
+
+var (
+	pythonOnce sync.Once
+	pythonPath string
+	pythonWhy  string
+)
+
+// findPythonForTests returns the interpreter the integration tests should use,
+// or an empty path and the reason there is none.
+func findPythonForTests() (string, string) {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		return "", err.Error()
+	}
+
 	candidates := []string{
 		filepath.Join(root, "ai", ".venv", "bin", "python"),
 		filepath.Join(root, "ai", ".venv", "Scripts", "python.exe"),
 	}
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
-			return candidate
+			return candidate, ""
 		}
 	}
 
-	// Fall back to a system interpreter only if it can run the worker, so the
-	// skip message says what is actually missing.
+	// Fall back to a system interpreter only if it can actually run the worker.
 	//
-	// The probe imports the protocol module rather than the package, and the
-	// difference is the whole reason this test used to fail on macOS and
-	// Windows: `import nikucooker_ai` succeeds against the source directory
-	// alone, because that directory is the working directory and therefore on
-	// sys.path. The worker starts, imports pydantic, and dies — so the tests
-	// ran, found no dependencies, and failed instead of skipping. The protocol
-	// module is what pulls those dependencies in, which makes it the honest
-	// question: can this interpreter run the worker, not can it see the source.
-	if path, err := exec.LookPath("python3"); err == nil {
-		check := exec.Command(path, "-c", "import nikucooker_ai.protocol")
-		check.Dir = filepath.Join(root, "ai")
-		if check.Run() == nil {
-			return path
-		}
+	// The probe is the worker's own self-check, which is the question the core
+	// asks at startup — are the dependencies importable — and the only one that
+	// answers it. Two weaker ones were tried and both let this fail instead of
+	// skipping:
+	//
+	//	import nikucooker_ai           passes anywhere; the source directory is
+	//	                               the working directory, so it is on
+	//	                               sys.path.
+	//	import nikucooker_ai.protocol  passes on a runner image that happens to
+	//	                               ship pydantic, and then the tests fail on
+	//	                               the next import down.
+	//
+	// A vendored copy of the check is not the point; the point is that a test
+	// which cannot run says so, rather than failing and looking like a bug.
+	system, err := exec.LookPath("python3")
+	if err != nil {
+		return "", "python3 is not on PATH either"
 	}
 
-	t.Skip("no AI worker environment; run `make ai-install` first")
-	return ""
+	check := exec.Command(system, "-m", "nikucooker_ai", "--selfcheck")
+	check.Dir = filepath.Join(root, "ai")
+	output, err := check.Output()
+	if err != nil {
+		return "", fmt.Sprintf("the interpreter at %s cannot run the worker: %v", system, err)
+	}
+	if !bytes.Contains(output, []byte(`"ok":true`)) {
+		return "", fmt.Sprintf("the interpreter at %s reports a broken environment", system)
+	}
+	return system, ""
 }
 
 // workerConfig builds a config pointing at the project's worker.

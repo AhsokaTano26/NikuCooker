@@ -64,12 +64,20 @@ def test_claim_stdout_isolates_the_protocol_stream():
 
         protocol.write(b'{"v":1,"id":"req_1","type":"result","result":{}}\n')
         protocol.flush()
-        protocol.close()
 
-        os.close(1)
-        os.close(2)
+        # Every write end closed before the readers look for EOF: the claimed
+        # handle, the descriptors they were dup'd onto, the file objects
+        # wrapping them, and the pipe ends os.pipe() returned. Leaving any one
+        # open is a read that never finishes.
+        protocol.close()
         sys.stdout.flush()
         sys.stderr.flush()
+        os.close(1)
+        os.close(2)
+        sys.stdout.close()
+        sys.stderr.close()
+        os.close(protocol_w)
+        os.close(noise_w)
 
         leaked = _read_all(protocol_r)
         noise = _read_all(noise_r)
@@ -97,11 +105,16 @@ def test_claim_stdout_isolates_the_protocol_stream():
 
 
 def _read_all(fd: int) -> bytes:
-    """Reads a pipe to EOF without blocking forever on an empty one."""
-    import select
+    """Reads a pipe to EOF.
 
+    Every write end is closed before this is called, so EOF is what ends the
+    loop. There is no select() here, and that is not a simplification: select
+    on Windows takes sockets and refuses a pipe, with WinError 10038 — "an
+    operation was attempted on something that is not a socket" — which is how
+    this test failed there while passing everywhere else.
+    """
     chunks: list[bytes] = []
-    while select.select([fd], [], [], 0.5)[0]:
+    while True:
         chunk = os.read(fd, 65536)
         if not chunk:
             break
