@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +22,7 @@ import (
 
 	"log/slog"
 
+	"github.com/AhsokaTano26/NikuCooker/internal/platform"
 	"github.com/AhsokaTano26/NikuCooker/pkg/protocol"
 )
 
@@ -577,7 +577,7 @@ func (w *Worker) Kill() error {
 	}
 
 	w.markStopped()
-	killProcessTree(w.cmd)
+	platform.KillProcessTree(w.cmd)
 
 	select {
 	case <-w.exited:
@@ -636,25 +636,4 @@ func (r *ringBuffer) Lines() []string {
 	out := make([]string, len(r.lines))
 	copy(out, r.lines)
 	return out
-}
-
-// killProcessTree terminates a worker and anything it spawned.
-//
-// On Windows a plain Kill leaves children behind, because Python's process
-// model does not propagate termination. taskkill /T is the only reliable
-// process-tree kill there.
-func killProcessTree(cmd *exec.Cmd) {
-	if cmd.Process == nil {
-		return
-	}
-
-	if runtime.GOOS == "windows" {
-		// The pid comes from os/exec, never from user input, so there is no
-		// interpolation concern; the arguments are still passed as a vector.
-		kill := exec.Command("taskkill", "/T", "/F", "/PID", fmt.Sprint(cmd.Process.Pid))
-		_ = kill.Run()
-		return
-	}
-
-	_ = cmd.Process.Kill()
 }

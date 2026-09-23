@@ -204,7 +204,7 @@ func runProbe(ctx context.Context, python, dir, program string, timeout time.Dur
 		// The interpreter's own words, not a generic failure. An import error
 		// naming the missing module is the whole answer, and replacing it with
 		// "probe failed" throws away the only useful part.
-		return fmt.Errorf("%w: %s", err, firstLines(string(output), 3))
+		return fmt.Errorf("%w: %s", err, FirstLines(string(output), 3))
 	}
 	return nil
 }
@@ -352,11 +352,32 @@ func (c Constraint) IsEmpty() bool { return len(c.comparisons) == 0 }
 // Helpers
 // ---------------------------------------------------------------------------
 
-// firstLines returns the first n lines of text, for an error message.
-func firstLines(text string, n int) string {
+// FirstLines returns the first n lines of text, for an error message.
+//
+// An interpreter probe fails at the top of its output — the traceback starts
+// there — so for those the beginning is the part worth keeping.
+func FirstLines(text string, n int) string {
+	return someLines(text, n, false)
+}
+
+// LastLines returns the last n lines of text, for an error message.
+//
+// uv is the opposite case: it narrates as it goes and fails at the end, so what
+// went wrong is in the tail. Its output is thousands of lines long, and all of
+// them in an error message is the same as none.
+func LastLines(text string, n int) string {
+	return someLines(text, n, true)
+}
+
+func someLines(text string, n int, fromEnd bool) string {
 	lines := strings.Split(strings.TrimSpace(text), "\n")
+
 	if len(lines) > n {
-		lines = append(lines[:n], "…")
+		if fromEnd {
+			lines = append([]string{"…"}, lines[len(lines)-n:]...)
+		} else {
+			lines = append(lines[:n], "…")
+		}
 	}
 	return strings.Join(lines, "\n  ")
 }
