@@ -72,6 +72,15 @@ jobs:
             echo "gofmt needed on:"; echo "$out"; exit 1
           fi
 
+      - name: Install FFmpeg
+        # The runner image does not ship it, and the suite cannot run without
+        # it: `app.New` refuses to build when the tools are missing, so the
+        # integration tests fail rather than skip. Ubuntu's package is built
+        # with libass, which is what the hard-subtitle path needs.
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -1
+
       - name: Build
         # CGO_ENABLED=0 exercises the same code path the release matrix uses.
         env:
