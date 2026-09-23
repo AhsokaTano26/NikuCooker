@@ -1,6 +1,6 @@
 name: Release
 
-# Tag locally, push the tag, and this builds and publishes it.
+# Tag locally, push the tag, and this builds, verifies, and publishes it.
 #
 #   git tag -a v0.1.0 -m v0.1.0
 #   git push origin v0.1.0
@@ -181,6 +181,15 @@ jobs:
         # it goes — but the release is a draft, so this failing leaves assets
         # nobody has published and a draft to delete.
         run: ./scripts/verify-archive.sh dist
+
+      - name: Publish verified release
+        # Keep the upload private until every archive has passed the structural
+        # check above. Publishing here closes the loop automatically: a
+        # successful tag workflow always leaves a visible Latest release.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --draft=false --latest
 
   package:
     name: Package (dry run)

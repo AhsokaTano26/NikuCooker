@@ -134,6 +134,15 @@ snapshot:
 
 changelog:
   sort: asc
+  groups:
+    - title: 新增功能
+      regexp: '^feat(\([[:alnum:]_-]+\))?(!)?: .+$'
+      order: 0
+    - title: 问题修复
+      regexp: '^fix(\([[:alnum:]_-]+\))?(!)?: .+$'
+      order: 1
+    - title: 其他改进
+      order: 999
   filters:
     exclude:
       - '^docs:'
@@ -142,8 +151,15 @@ changelog:
 
 release:
   draft: true
-  # The release is drafted so the notes can be reviewed before anything is
-  # published — a release is outward-facing and hard to walk back.
+  # GoReleaser uploads into a draft so the workflow can inspect the finished
+  # archives before making them public. The final workflow step publishes the
+  # verified draft and marks it as the latest release.
+  header: |
+    ## 本次更新
+
+    以下内容根据自上一个版本以来的提交自动整理。功能、修复和其他改进
+    会分别列出，便于在下载前快速了解这个版本发生了什么变化。
+
   footer: |
     ## Installation
 
