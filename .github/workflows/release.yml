@@ -28,6 +28,9 @@ on:
     paths:
       - .goreleaser.yaml
       - .github/workflows/release.yml
+      # The packaging scripts decide what ends up in an archive, so a change to
+      # one of them is a change to the packaging.
+      - scripts/**
 
   # A way to run the packaging without cutting a version: same build, nothing
   # published. Useful for trying a change to the configuration before a tag.
@@ -329,9 +332,21 @@ jobs:
           args: check
 
       - name: Build every target without publishing
+        # The before-hooks run here too, so this also downloads and verifies the
+        # uv copies that ship in the archives — one per target, about 100 MB in
+        # total. That is the point: a change to uv's release layout fails this
+        # job rather than a user's first install.
         uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'
           args: release --snapshot --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check what the archives contain
+        # The configuration above cannot be read to answer this. A glob that
+        # flattens a directory, or an include-list that misses a file, produces
+        # an archive that lists correctly and cannot import its own package —
+        # so this compares the whole ai/ tree, and asserts the bundled uv is
+        # where the binary will look for it.
+        run: ./scripts/verify-archive.sh dist

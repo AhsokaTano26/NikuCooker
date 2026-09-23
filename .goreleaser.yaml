@@ -13,6 +13,11 @@ before:
     # The web application is embedded, so it has to exist before Go compiles.
     - pnpm --dir web install --frozen-lockfile
     - pnpm --dir web build
+    # Stages one uv per target into build/uv/<goos>_<goarch>/. Downloaded and
+    # checksum-verified here rather than per archive, because a release asset
+    # name is not the same thing as a GOOS/GOARCH pair — see the script, which
+    # is the only place that translation lives.
+    - ./scripts/fetch-uv.sh
 
 builds:
   - id: nikucooker
@@ -58,6 +63,33 @@ archives:
       # in the archive is worse than no pointer: it reads as a missing file
       # rather than as documentation that lives elsewhere.
       - INSTALL.md
+
+      # The AI worker's source, so that the first-run install has something to
+      # install into. Listed file by file rather than as ai/**/* because the
+      # tree carries a .venv, __pycache__ and test caches that must not ship —
+      # a virtual environment bakes in the builder's absolute paths.
+      #
+      # scripts/verify-archive.sh compares the extracted ai/ against the
+      # repository's whole tree, because a silently flattened or truncated
+      # copy looks fine in a listing and cannot import its own package.
+      - src: ai/pyproject.toml
+        dst: ai/
+      - src: ai/uv.lock
+        dst: ai/
+      # pyproject.toml declares it, and uv builds the project itself before
+      # syncing dependencies — without it, hatchling fails with "Readme file
+      # does not exist". Same reason the Dockerfile copies it.
+      - src: ai/README.md
+        dst: ai/
+      - src: ai/.python-version
+        dst: ai/
+      - src: ai/nikucooker_ai/**/*.py
+        dst: ai/nikucooker_ai
+
+      # The uv staged by the before-hook, one per target. {{ .Os }} and
+      # {{ .Arch }} are per-archive, so one entry covers the matrix.
+      - src: build/uv/{{ .Os }}_{{ .Arch }}/uv{{ if eq .Os "windows" }}.exe{{ end }}
+        dst: .
 
 checksum:
   name_template: checksums.txt
