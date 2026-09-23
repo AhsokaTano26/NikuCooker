@@ -388,9 +388,12 @@ export const system = {
    *
    * Resolves once the install has *started*. It takes minutes and reports
    * through the `runtime.provision` event; this call is only the permission.
+   *
+   * `cuda` asks for the NVIDIA dependency set. It costs several hundred
+   * megabytes more, and the server refuses it on a machine that cannot use it.
    */
-  provisionRuntime: (): Promise<void> =>
-    request('/system/runtime/provision', { method: 'POST' }),
+  provisionRuntime: (cuda = false): Promise<void> =>
+    request('/system/runtime/provision', { method: 'POST', body: { cuda } }),
 
   cancelProvision: (): Promise<void> =>
     request('/system/runtime/provision/cancel', { method: 'POST' }),

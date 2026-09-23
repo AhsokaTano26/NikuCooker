@@ -85,6 +85,92 @@ var (
 // to recover from.
 const MinFreeBytes = 2 << 30
 
+// minFreeBytes is that floor for one request.
+//
+// The CUDA set is seven hundred megabytes of wheels, and uv's cache holds a
+// second copy of them while it works — so a check that used the CPU floor would
+// wave through an install that runs out halfway, which is the failure the floor
+// exists to prevent.
+func minFreeBytes(req Request) int64 {
+	if req.Extra == "" {
+		return MinFreeBytes
+	}
+	return MinFreeBytes + 2*ExtraCUDABytes
+}
+
+// ---------------------------------------------------------------------------
+// Optional dependency sets
+// ---------------------------------------------------------------------------
+
+// ExtraCUDA is the dependency group that adds the NVIDIA libraries CTranslate2
+// needs to run speech recognition on a GPU.
+//
+// The name is uv's and has to match [project.optional-dependencies] in
+// ai/pyproject.toml — this constant is the Go side of that agreement, and a
+// rename on either side without the other produces an `--extra` uv rejects.
+const ExtraCUDA = "cuda"
+
+// ExtraCUDABytes is about what that group adds to the install.
+//
+// Read from the wheels uv.lock pins — nvidia-cublas-cu12 12.9.2.10 at 581 MB
+// plus the nvidia-cuda-nvrtc-cu12 it depends on — rounded, because the point of
+// stating it is that a download of this size is consented to before it starts
+// rather than discovered during it. A figure a hundred megabytes out still
+// answers that question; a resolved one that drifts with every lock update
+// would answer the same question no better and cost a lock parser to produce.
+const ExtraCUDABytes = 700 << 20
+
+// CUDAUnavailable is why the CUDA set cannot be used here.
+//
+// A code and not a sentence. The interface renders this under the GPU option,
+// where it is visible on most machines rather than only on failures, and it
+// renders it to someone reading Chinese — server prose there would be an
+// English line under a Chinese label. Message() carries the wording for the
+// places that want words: the log, and the refusal an API client gets.
+type CUDAUnavailable string
+
+const (
+	// CUDANotOnDarwin: the nvidia-* wheels are published for Linux and Windows
+	// only. On macOS this fails at install time whatever hardware is attached.
+	CUDANotOnDarwin CUDAUnavailable = "platform"
+
+	// CUDANoGPU: nothing to accelerate. The libraries are several hundred
+	// megabytes, and downloading them onto a machine that will never load them
+	// is the mistake worth preventing before the download rather than after it.
+	CUDANoGPU CUDAUnavailable = "no_gpu"
+)
+
+// Message is the reason in words. Empty when there is no reason.
+func (r CUDAUnavailable) Message() string {
+	switch r {
+	case CUDANotOnDarwin:
+		return "the NVIDIA libraries are not published for macOS, and CTranslate2 " +
+			"has no Metal backend, so speech recognition runs on the CPU here"
+	case CUDANoGPU:
+		return "no NVIDIA GPU was detected, so the CUDA libraries would be " +
+			"downloaded and never used"
+	}
+	return ""
+}
+
+// CUDAUsable reports whether the CUDA set can be installed and used on this
+// machine. An empty reason means it can.
+//
+// Two independent questions, and both have to be yes: whether uv could resolve
+// the extra here at all, and whether there is a card for it to drive.
+//
+// goos is a parameter rather than read from runtime so that both answers are
+// testable on one machine.
+func CUDAUsable(goos string, gpus []platform.GPUInfo) (bool, CUDAUnavailable) {
+	if goos == "darwin" {
+		return false, CUDANotOnDarwin
+	}
+	if len(gpus) == 0 {
+		return false, CUDANoGPU
+	}
+	return true, ""
+}
+
 // Progress is one phase transition.
 type Progress struct {
 	Phase   Phase
@@ -110,8 +196,10 @@ type Request struct {
 	// Python is the interpreter version to install, e.g. "3.12".
 	Python string
 
-	// Extra names an optional dependency group, such as "cuda". Empty in the
-	// current interface, which installs the CPU set.
+	// Extra names an optional dependency group, such as ExtraCUDA. Empty
+	// installs the default set, which runs on the CPU — and which is what every
+	// machine gets unless someone asked for more, because the accelerators this
+	// adds cost several hundred megabytes.
 	Extra string
 
 	// Environ is the environment the child inherits. Passed through untouched
@@ -290,9 +378,10 @@ func (m *Manager) detect(ctx context.Context, req Request) error {
 	}
 
 	// A nil reading means "could not tell", which must not block.
-	if free := platform.FreeSpace(req.RuntimeDir); free != nil && *free < MinFreeBytes {
+	floor := minFreeBytes(req)
+	if free := platform.FreeSpace(req.RuntimeDir); free != nil && *free < floor {
 		return fmt.Errorf("%w: %s available in %s, about %s needed",
-			ErrNoSpace, bytes(*free), req.RuntimeDir, bytes(MinFreeBytes))
+			ErrNoSpace, bytes(*free), req.RuntimeDir, bytes(floor))
 	}
 
 	return nil

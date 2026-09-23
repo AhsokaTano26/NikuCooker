@@ -40,10 +40,16 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	// Gathered once and shared. The accelerator probe is a separate process
+	// with a two-second ceiling, and asking it twice for one page — once for
+	// the host section and once for the CUDA option — would double the wait on
+	// exactly the machines where it is slowest.
+	host := platform.HostStats(ctx, s.app.DataDir(), s.app.Config().Storage.ModelDir)
+
 	s.fillCounts(ctx, &overview.Counts)
 	s.fillWorker(ctx, &overview.Worker)
-	s.fillRuntime(&overview.Runtime)
-	s.fillStats(ctx, &overview.Stats)
+	s.fillRuntime(&overview.Runtime, host.GPU)
+	s.fillStats(host, &overview.Stats)
 
 	s.respond(w, http.StatusOK, overview)
 }
@@ -54,7 +60,10 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 // that matter: whether an install *could* run here, whether one is running, and
 // whether an interpreter exists on disk right now — which stays true across a
 // restart, and is the one the worker will actually be launched with.
-func (s *Server) fillRuntime(view *runtimeView) {
+//
+// gpus comes from the host stats this same request gathered, rather than from a
+// second probe.
+func (s *Server) fillRuntime(view *runtimeView, gpus []platform.GPUInfo) {
 	view.RuntimeDir = s.app.RuntimeDir()
 	view.Available, view.Reason = s.app.ProvisioningAvailable()
 	view.Status = string(provision.StatusIdle)
@@ -85,6 +94,11 @@ func (s *Server) fillRuntime(view *runtimeView) {
 			view.Python = python
 		}
 	}
+
+	// After the block above, because what the environment was built with is a
+	// question about an environment that exists.
+	s.fillAccelerator(view)
+	s.fillCUDA(view, gpus)
 
 	state := s.app.ProvisioningState()
 	view.Status = string(state.Status)
@@ -197,9 +211,48 @@ func (s *Server) fillWorker(ctx context.Context, view *workerView) {
 	}
 }
 
-func (s *Server) fillStats(ctx context.Context, stats *systemStats) {
-	host := platform.HostStats(ctx, s.app.DataDir(), s.app.Config().Storage.ModelDir)
+// fillCUDA reports whether the GPU dependency set can be offered here.
+//
+// The same decision the provision request enforces, read from the same
+// function, so that the button the page shows and the answer the server gives
+// cannot disagree. A machine that cannot use it gets the reason instead of a
+// disabled control with no explanation.
+func (s *Server) fillCUDA(view *runtimeView, gpus []platform.GPUInfo) {
+	available, reason := provision.CUDAUsable(runtime.GOOS, gpus)
+	view.CUDA.Available = available
+	view.CUDA.ReasonCode = string(reason)
+	view.CUDA.ExtraBytes = provision.ExtraCUDABytes
+	view.CUDA.GPUs = make([]string, 0, len(gpus))
+	for _, gpu := range gpus {
+		view.CUDA.GPUs = append(view.CUDA.GPUs, gpu.Name)
+	}
+}
 
+// fillAccelerator reports which dependency set the environment was built with,
+// read from the record the install wrote.
+//
+// A file this program wrote, and not a guess from the hardware: a card in the
+// machine says nothing about what the interpreter beside it was installed with,
+// and the two answers differ exactly when someone is wondering whether their
+// GPU is being used. No record at all is left empty rather than reported as
+// CPU, because that is the case this cannot answer.
+func (s *Server) fillAccelerator(view *runtimeView) {
+	if !view.Provisioned {
+		return
+	}
+
+	manifest, err := provision.ReadManifest(platform.RuntimeManifestPath(view.RuntimeDir))
+	if err != nil {
+		return
+	}
+
+	view.Accelerator = "cpu"
+	if manifest.Extra == provision.ExtraCUDA {
+		view.Accelerator = "cuda"
+	}
+}
+
+func (s *Server) fillStats(host platform.Stats, stats *systemStats) {
 	stats.CPU = cpuStats{Cores: host.CPU.Cores, UsagePercent: host.CPU.UsagePercent}
 	stats.Memory = memoryStats{TotalBytes: host.Memory.TotalBytes, UsedBytes: host.Memory.UsedBytes}
 	stats.Disk = diskStats{

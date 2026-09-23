@@ -136,12 +136,51 @@ type runtimeView struct {
 	RuntimeDir  string `json:"runtime_dir"`
 	UV          string `json:"uv,omitempty"`
 
+	// Accelerator is which optional dependency set that interpreter was built
+	// with: "cuda" or "cpu". Empty when there is no record of the install —
+	// an environment this program did not build, such as a checkout's own —
+	// which is a different answer from "the CPU one" and is rendered as
+	// neither rather than as a guess.
+	Accelerator string `json:"accelerator,omitempty"`
+
 	ErrorCode    string `json:"error_code,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
 	Remediation  string `json:"remediation,omitempty"`
 
+	// CUDA is whether the install can be asked for GPU acceleration here.
+	CUDA cudaView `json:"cuda"`
+
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+// cudaView is the GPU option, offered or refused before it is chosen.
+//
+// It hangs off the runtime rather than the host section because it is a
+// property of the install: the same question decides which button the System
+// page shows, and the answer has to be the same one the provision request
+// enforces. The host section reports what the machine has; this reports what
+// the environment can be built with.
+type cudaView struct {
+	// Available is whether the CUDA set can be installed and used here.
+	Available bool `json:"available"`
+
+	// ReasonCode says why not, when it cannot: "platform" where the wheels do
+	// not exist for this system, "no_gpu" where there is nothing to accelerate.
+	//
+	// A code rather than a sentence because the interface renders it to someone
+	// reading Chinese, and it renders it on most machines rather than only on
+	// failures — see provision.CUDAUnavailable.
+	ReasonCode string `json:"reason_code,omitempty"`
+
+	// GPUs names the accelerators that were found, so that "yes" is checkable:
+	// a person who reads their own card's name back knows the detection worked,
+	// and one who does not see it knows why the option is missing.
+	GPUs []string `json:"gpus"`
+
+	// ExtraBytes is what choosing it adds to the download, so the cost is
+	// stated before the choice rather than discovered by watching it.
+	ExtraBytes int64 `json:"extra_bytes"`
 }
 
 // systemFeatures reports what this installation is configured to do.

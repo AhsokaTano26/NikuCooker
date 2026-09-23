@@ -87,7 +87,7 @@ func HostStats(ctx context.Context, dataDir, modelDir string) Stats {
 	stats.Disk.DataFreeBytes = FreeSpace(dataDir)
 	stats.Disk.ModelsFreeBytes = FreeSpace(modelDir)
 
-	stats.GPU = detectGPUs(ctx)
+	stats.GPU = GPUs(ctx)
 
 	return stats
 }
@@ -123,7 +123,7 @@ func FreeSpace(path string) *int64 {
 // GPU section, not a dashboard that never arrives.
 const gpuProbeTimeout = 2 * time.Second
 
-// detectGPUs reports the NVIDIA accelerators this machine exposes.
+// GPUs reports the NVIDIA accelerators this machine exposes.
 //
 // NVIDIA only, queried through nvidia-smi. It is the accelerator that matters
 // here — faster-whisper runs on CUDA or on the CPU, and this project does not
@@ -132,7 +132,12 @@ const gpuProbeTimeout = 2 * time.Second
 //
 // An absent nvidia-smi is not an error: it is the normal state of a machine
 // without an NVIDIA card.
-func detectGPUs(ctx context.Context) []GPUInfo {
+//
+// Exported because the install decision needs this answer on its own. The
+// System page reads it as part of HostStats, but an install request has to ask
+// "is the CUDA set worth downloading" without also sampling the CPU for 200 ms
+// and stat-ing two filesystems.
+func GPUs(ctx context.Context) []GPUInfo {
 	path, err := exec.LookPath("nvidia-smi")
 	if err != nil {
 		return []GPUInfo{}

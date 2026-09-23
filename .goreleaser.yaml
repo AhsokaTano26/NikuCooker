@@ -134,6 +134,10 @@ release:
     300 MB, downloaded once into the data directory. Nothing is downloaded
     before you click.
 
+    On a machine with an NVIDIA card the same page offers the GPU set beside the
+    default: about 700 MB more, and considerably faster. The option is only
+    offered where it can work, and says why when it cannot.
+
     FFmpeg and ffprobe must be on your PATH. `nikucooker doctor` checks
     everything and says what to do about whatever is missing.
 

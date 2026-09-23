@@ -48,6 +48,14 @@ the data directory, checks what it installed, and reports each step as it goes.
 It happens once. Nothing is downloaded before you click, and the size and the
 destination are both shown first.
 
+**On a machine with an NVIDIA card** the page offers a second choice beside the
+default: the same environment plus the NVIDIA libraries, about 700 MB more,
+which makes recognition considerably faster. It is offered only where it can
+work — the libraries have no macOS build, and the option is withheld with the
+reason on a machine without a card. Nothing to configure afterwards: the worker
+picks the GPU up on its own, and the System page reports which one it was
+installed for.
+
 If it fails, the page shows `uv`'s own error, and for the failures people
 actually hit — a corporate proxy, a full disk, a TLS-inspecting firewall — a
 line saying what to do about it. The install can be cancelled, and a cancelled

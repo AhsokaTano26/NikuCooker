@@ -24,8 +24,12 @@ import (
 // It does not wait, because the caller is an HTTP handler with a response to
 // send and an install that takes minutes to run. The invalidation still happens
 // on success: a goroutine watches for the terminal state.
-func (a *App) StartProvision(onProgress func(provision.Progress)) error {
-	req, err := a.provisionRequest()
+//
+// extra names an optional dependency set — provision.ExtraCUDA, or empty for
+// the default. It is not validated here: the caller decides whether this
+// machine can use it, because only the caller has the accelerator list.
+func (a *App) StartProvision(onProgress func(provision.Progress), extra string) error {
+	req, err := a.provisionRequest(extra)
 	if err != nil {
 		return err
 	}
@@ -119,7 +123,7 @@ func (a *App) ProvisioningAvailable() (bool, string) {
 }
 
 // provisionRequest assembles what an install needs.
-func (a *App) provisionRequest() (provision.Request, error) {
+func (a *App) provisionRequest(extra string) (provision.Request, error) {
 	dir, err := a.AIDir()
 	if err != nil {
 		return provision.Request{}, err
@@ -160,6 +164,7 @@ func (a *App) provisionRequest() (provision.Request, error) {
 		RuntimeDir: runtimeDir,
 		UV:         uv,
 		Python:     pythonFloor(a.Config().AI.PythonVersion),
+		Extra:      extra,
 		Environ:    os.Environ(),
 	}, nil
 }

@@ -3,6 +3,7 @@ package provision
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -376,5 +377,97 @@ func TestLineBufferKeepsTheTail(t *testing.T) {
 	_, _ = fresh.Write([]byte("lo\nworld"))
 	if got := fresh.String(); got != "hello\nworld" {
 		t.Errorf("split write = %q", got)
+	}
+}
+
+// The extra name is an agreement with a Python file.
+//
+// uv rejects an unknown --extra, so a rename on one side without the other
+// turns the GPU option into a failed install on a user's machine — several
+// hundred megabytes into a download that cannot finish. Comparing the two is
+// what catches it here instead.
+func TestCUDAExtraMatchesPyproject(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "ai", "pyproject.toml"))
+	if err != nil {
+		t.Fatalf("cannot read the worker's pyproject: %v", err)
+	}
+
+	declared := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(ExtraCUDA) + `\s*=`).
+		FindString(string(raw))
+	if declared == "" {
+		t.Errorf("provision.ExtraCUDA is %q and ai/pyproject.toml has no such "+
+			"optional dependency group", ExtraCUDA)
+	}
+}
+
+// The one decision here that costs money when it is wrong.
+//
+// Wrong in one direction: seven hundred megabytes downloaded onto a machine
+// with nothing to accelerate. Wrong in the other: an option missing from a
+// machine that could have used it. Both are answered without a GPU present, by
+// passing what was detected in.
+func TestCUDAUsable(t *testing.T) {
+	card := []platform.GPUInfo{{Index: 0, Name: "NVIDIA GeForce RTX 4090"}}
+
+	tests := []struct {
+		name string
+		goos string
+		gpus []platform.GPUInfo
+		want bool
+		why  CUDAUnavailable
+	}{
+		{"linux with a card", "linux", card, true, ""},
+		{"windows with a card", "windows", card, true, ""},
+		{"linux with none detected", "linux", nil, false, CUDANoGPU},
+		{"linux with an empty result", "linux", []platform.GPUInfo{}, false, CUDANoGPU},
+		// The nvidia-* wheels are not published for macOS, so this fails at
+		// install time whatever hardware is attached — and saying "no GPU" here
+		// would send someone shopping for a card that would not help.
+		{"macOS with a card", "darwin", card, false, CUDANotOnDarwin},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, why := CUDAUsable(test.goos, test.gpus)
+			if got != test.want {
+				t.Fatalf("CUDAUsable(%q, %d gpus) = %v, want %v",
+					test.goos, len(test.gpus), got, test.want)
+			}
+			if why != test.why {
+				t.Errorf("reason = %q, want %q", why, test.why)
+			}
+
+			// Every code has to render as words somewhere, and a code that
+			// renders as nothing is a refusal with no explanation on whichever
+			// surface uses Message().
+			if why != "" && why.Message() == "" {
+				t.Errorf("reason %q has no wording", why)
+			}
+		})
+	}
+}
+
+// The codes are an agreement with the interface.
+//
+// They cross the wire as strings and the browser turns them into the sentence
+// that appears under the GPU option. A code the browser does not know renders
+// as nothing at all — which is the same silence this option exists to avoid.
+//
+// Only the codes are compared here. That each one *has* wording is the
+// compiler's job: the union is declared beside the API types and the wording is
+// a Record over it, so a code added on this side without one on that side does
+// not build.
+func TestCUDAReasonCodesAreKnownToTheInterface(t *testing.T) {
+	path := filepath.Join("..", "..", "web", "src", "types", "api.ts")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("cannot read the interface's API types: %v", err)
+	}
+
+	for _, code := range []CUDAUnavailable{CUDANotOnDarwin, CUDANoGPU} {
+		if !strings.Contains(string(raw), "'"+string(code)+"'") {
+			t.Errorf("the server reports %q and the interface declares no such code; "+
+				"add it to CudaReasonCode in web/src/types/api.ts", code)
+		}
 	}
 }

@@ -1,4 +1,4 @@
-import type { RuntimePhase, WorkerStatus } from '@/types/api'
+import type { CudaReasonCode, RuntimePhase, WorkerStatus } from '@/types/api'
 
 /**
  * What the environment check's verdict means, in words.
@@ -49,4 +49,42 @@ export const INSTALL_STEPS: { phase: RuntimePhase; label: string }[] = [
 /** The label for one step, for a display that shows only the current one. */
 export function installStepLabel(phase: RuntimePhase | undefined): string {
   return INSTALL_STEPS.find((step) => step.phase === phase)?.label ?? ''
+}
+
+/**
+ * Why the GPU option is not offered, in words.
+ *
+ * The server sends a code and never a sentence, following the same rule as
+ * WORKER_LABEL — and for a stronger reason here, because this line is not an
+ * error message that appears on failures: it sits under the GPU option on every
+ * machine that cannot use one, which is most of them. A code with no wording
+ * renders as an unexplained disabled control, so the Go test that owns the
+ * codes compares them against this map.
+ */
+/**
+ * A record over the union rather than over `string`, so a code the server
+ * starts sending and this file does not is a type error rather than a blank
+ * line under the option.
+ */
+export const CUDA_REASON: Record<CudaReasonCode, string> = {
+  platform: 'NVIDIA 的加速库没有 macOS 版本，而这台机器上的识别本来就跑在 CPU 上。',
+  no_gpu: '没有检测到 NVIDIA 显卡，装了也用不上。',
+}
+
+/** The reason for one code, or the code itself if this build has no wording. */
+export function cudaReason(code: CudaReasonCode | undefined): string {
+  if (!code) return ''
+  return CUDA_REASON[code] ?? code
+}
+
+/**
+ * What the installed environment was built to run on.
+ *
+ * Named by the dependency set, not by what the machine has: the two differ for
+ * anyone whose card is idle because they installed the default set, which is
+ * the question this row exists to answer.
+ */
+export const ACCELERATOR_LABEL: Record<string, string> = {
+  cpu: 'CPU',
+  cuda: 'NVIDIA CUDA',
 }

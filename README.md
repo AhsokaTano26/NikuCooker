@@ -130,7 +130,9 @@ web interface already embedded in it — no Go, Node or build toolchain needed.
 The archive also carries the AI worker's source and a copy of `uv`. The Python
 interpreter and the AI dependencies they need are installed once, from the
 System page of the interface, by clicking a button that says how much it will
-download and where it will put it.
+download and where it will put it. On a machine with an NVIDIA card the same
+page offers the GPU set beside the default — about 700 MB more, and the option
+is withheld with a reason where it could not work.
 
 See **[INSTALL.md](INSTALL.md)** for the platform steps.
 

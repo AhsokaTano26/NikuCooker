@@ -269,6 +269,10 @@ export interface RuntimeView {
   python?: string
   runtime_dir: string
   uv?: string
+  /** Which optional dependency set the interpreter was built with — 'cpu' or
+   *  'cuda'. Absent when this program has no record of building it, which is a
+   *  different answer from the CPU one and is shown as neither. */
+  accelerator?: string
 
   error_code?: string
   error_message?: string
@@ -276,8 +280,42 @@ export interface RuntimeView {
    *  be worth recognising. */
   remediation?: string
 
+  cuda: CudaView
+
   started_at?: string
   finished_at?: string
+}
+
+/**
+ * Why the GPU option is not available. A stable code, never prose: the wording
+ * belongs with the other labels, in `composables/environment.ts`.
+ *
+ * `platform` — no nvidia-* wheels are published for this system.
+ * `no_gpu`   — there is nothing here to accelerate.
+ */
+export type CudaReasonCode = 'platform' | 'no_gpu'
+
+/**
+ * The GPU option.
+ *
+ * Whether the install can be asked for CUDA acceleration on this machine, and
+ * what that costs. Decided by the server from the detected hardware and the
+ * platform, because it has to agree with what the install request itself will
+ * enforce — a page that offers an option the server refuses is worse than one
+ * that never offered it.
+ */
+export interface CudaView {
+  /** Whether the CUDA dependency set can be installed and used here. */
+  available: boolean
+  /** Why not, when it cannot: a stable code, not prose. The wording lives in
+   *  CUDA_REASON, because the interface is the only thing that renders it. */
+  reason_code?: CudaReasonCode
+  /** The accelerators that were detected, by name, so "yes" is checkable. */
+  gpus: string[]
+  /** What choosing it adds to the download, in bytes. */
+  extra_bytes: number
+  /** Whether the environment on disk was built with it. */
+  installed: boolean
 }
 
 /**

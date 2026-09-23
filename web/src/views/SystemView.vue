@@ -3,9 +3,16 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 import { ApiError, api } from '@/api/client'
 import AppButton from '@/components/AppButton.vue'
+import AppRadio from '@/components/AppRadio.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
-import { INSTALL_STEPS, WORKER_LABEL, needsAttention } from '@/composables/environment'
+import {
+  ACCELERATOR_LABEL,
+  INSTALL_STEPS,
+  WORKER_LABEL,
+  cudaReason,
+  needsAttention,
+} from '@/composables/environment'
 import type { RuntimePhase } from '@/types/api'
 
 const events = useEventStore()
@@ -72,17 +79,34 @@ function stepMark(phase: RuntimePhase): string {
 }
 
 /**
+ * Which dependency set to install.
+ *
+ * 'cuda' is only ever selected where the server said it could be used, so the
+ * request cannot be one the server refuses; the watcher is what keeps that true
+ * across a reload, since the answer comes from the machine rather than from the
+ * choice.
+ */
+const device = ref<'cpu' | 'cuda'>('cpu')
+watch(
+  () => runtime.value?.cuda.available,
+  (available) => {
+    if (!available) device.value = 'cpu'
+  },
+)
+
+/**
  * Installs the AI environment.
  *
  * Nothing happens without this click: the download is several hundred megabytes
  * and may be on a metered connection, so it is offered rather than taken. The
  * figure and the destination are both stated, because "it is about to download
- * something" is not consent.
+ * something" is not consent. Choosing the GPU set states the extra it costs in
+ * the same place.
  */
 async function install(): Promise<void> {
   installError.value = null
   try {
-    await api.system.provisionRuntime()
+    await api.system.provisionRuntime(device.value === 'cuda')
     overview.run()
   } catch (cause) {
     installError.value = cause instanceof ApiError ? cause.message : String(cause)
@@ -188,6 +212,16 @@ async function shutdown(): Promise<void> {
             <dd class="truncate font-mono text-xs" :title="worker?.python">{{ worker?.python || '—' }}</dd>
           </div>
           <div class="flex justify-between gap-4">
+            <dt class="shrink-0 text-ink-muted">加速</dt>
+            <dd>
+              {{
+                runtime?.accelerator
+                  ? (ACCELERATOR_LABEL[runtime.accelerator] ?? runtime.accelerator)
+                  : '—'
+              }}
+            </dd>
+          </div>
+          <div class="flex justify-between gap-4">
             <dt class="shrink-0 text-ink-muted">协议摘要</dt>
             <dd class="truncate font-mono text-xs" :title="worker?.schema_digest">
               {{ worker?.schema_digest || '—' }}
@@ -270,6 +304,35 @@ async function shutdown(): Promise<void> {
               装在 <span class="font-mono">{{ runtime.runtime_dir }}</span>，
               删掉这个目录即可回收空间。
             </p>
+
+            <!--
+              The accelerator, chosen before the download rather than measured
+              after it. The GPU option carries its own price, and where there is
+              no card to use the reason takes the option's place: a control that
+              is present and refuses to move is the thing this avoids, and the
+              line is visible on most machines rather than only on failures.
+            -->
+            <fieldset class="mt-3 space-y-2">
+              <legend class="text-xs text-ink-faint">计算设备</legend>
+              <AppRadio
+                v-model="device"
+                value="cpu"
+                label="CPU"
+                hint="任何机器都能跑。识别速度取决于处理器，Apple 芯片也只能走这条路。"
+              />
+              <AppRadio
+                v-model="device"
+                value="cuda"
+                :disabled="!runtime.cuda.available"
+                :label="`NVIDIA 显卡${runtime.cuda.gpus.length > 0 ? `（${runtime.cuda.gpus.join('、')}）` : ''}`"
+                :hint="
+                  runtime.cuda.available
+                    ? `快得多，代价是多下载约 ${formatBytes(runtime.cuda.extra_bytes)} 的 NVIDIA 计算库。装好后自动启用，不用改配置。`
+                    : cudaReason(runtime.cuda.reason_code)
+                "
+              />
+            </fieldset>
+
             <AppButton class="mt-3" size="sm" variant="primary" @click="install">
               安装 AI 运行环境
             </AppButton>

@@ -2,11 +2,20 @@ package api
 
 import (
 	"net/http"
+	"runtime"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/app"
 	"github.com/AhsokaTano26/NikuCooker/internal/events"
+	"github.com/AhsokaTano26/NikuCooker/internal/platform"
 	"github.com/AhsokaTano26/NikuCooker/internal/provision"
 )
+
+// provisionBody is what an install can be asked for.
+type provisionBody struct {
+	// CUDA asks for the NVIDIA dependency set. Extra download, and the only
+	// reason the environment is not one fixed set of packages.
+	CUDA bool `json:"cuda"`
+}
 
 // provisionRuntime installs the AI environment, in the background.
 //
@@ -14,9 +23,34 @@ import (
 // and returns, and the interface follows the event stream. The client that
 // asked may close the tab, and several hundred megabytes should still arrive.
 func (s *Server) provisionRuntime(w http.ResponseWriter, r *http.Request) {
+	// The body is optional. Asking for the default environment is a request
+	// with nothing in it, and requiring `{}` to say so would be a formality.
+	var body provisionBody
+	if r.ContentLength != 0 {
+		if apiErr := decode(r, &body); apiErr != nil {
+			s.fail(w, apiErr)
+			return
+		}
+	}
+
 	if ok, reason := s.app.ProvisioningAvailable(); !ok {
 		s.fail(w, Failed(http.StatusPreconditionFailed, CodeUnavailable, reason))
 		return
+	}
+
+	extra := ""
+	if body.CUDA {
+		// Checked rather than taken on trust: the interface does not offer this
+		// on a machine that cannot use it, and a request that arrives anyway is
+		// answered with the reason instead of seven hundred megabytes of
+		// libraries that nothing would load.
+		usable, reason := provision.CUDAUsable(runtime.GOOS, platform.GPUs(r.Context()))
+		if !usable {
+			s.fail(w, Failed(http.StatusPreconditionFailed, CodeUnavailable,
+				"GPU acceleration was requested, but "+reason.Message()))
+			return
+		}
+		extra = provision.ExtraCUDA
 	}
 
 	// Only when the check found something missing. The interface does not offer
@@ -42,9 +76,9 @@ func (s *Server) provisionRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.log.Info("AI environment install requested through the interface",
-		"remote_addr", r.RemoteAddr)
+		"remote_addr", r.RemoteAddr, "extra", extra)
 
-	if err := s.app.StartProvision(s.provisionReporter()); err != nil {
+	if err := s.app.StartProvision(s.provisionReporter(), extra); err != nil {
 		if err == provision.ErrBusy {
 			s.fail(w, conflict(CodeConflict, "an install is already running"))
 			return

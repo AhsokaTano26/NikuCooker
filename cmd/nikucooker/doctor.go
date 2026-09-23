@@ -345,7 +345,8 @@ func checkRuntime(application *app.App) check {
 	if _, err := os.Stat(python); err != nil {
 		return check{
 			Name: "AI runtime", Status: "warn",
-			Detail: "no environment is installed; the interface can install one (about 300 MB)",
+			Detail: "no environment is installed; the interface can install one " +
+				"(about 300 MB, or 1 GB with the NVIDIA libraries)",
 		}
 	}
 
@@ -373,10 +374,18 @@ func checkRuntime(application *app.App) check {
 		}
 	}
 
+	// Which dependency set it was built with, because "is my GPU being used" is
+	// the question this answer is read for, and the machine's card does not
+	// answer it — the environment may have been installed for the CPU.
+	accelerator := "CPU"
+	if manifest.Extra == provision.ExtraCUDA {
+		accelerator = "NVIDIA CUDA"
+	}
+
 	return check{
 		Name:   "AI runtime",
 		Status: "ok",
-		Detail: fmt.Sprintf("%s (built %s)", python, manifest.CreatedAt.Format("2006-01-02")),
+		Detail: fmt.Sprintf("%s (built %s, %s)", python, manifest.CreatedAt.Format("2006-01-02"), accelerator),
 	}
 }
 
