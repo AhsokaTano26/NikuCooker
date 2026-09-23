@@ -2,7 +2,7 @@
 #
 #   goreleaser release --snapshot --clean     # local dry run
 #
-# Validate with `goreleaser check`. See docs/deployment.md §7.
+# Validate with `goreleaser check`. See docs/deployment.md §5.
 
 version: 2
 

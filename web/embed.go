@@ -2,7 +2,7 @@
 //
 // Embedding means a release is a single executable with no asset directory to
 // lose, no path to misconfigure and no separate deployment step. See
-// docs/deployment.md §7.
+// docs/deployment.md §5.
 //
 // dist/ holds a tracked .gitkeep so that `go build` succeeds on a fresh clone
 // with no Node toolchain — a //go:embed directive fails to compile if its
