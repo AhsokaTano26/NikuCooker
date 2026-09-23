@@ -283,14 +283,24 @@ func TestResolvePathsMakesConfiguredDirectoriesAbsolute(t *testing.T) {
 // surprise, and on a system with symlinked directories it would be a different
 // place.
 func TestResolvePathsLeavesAbsolutePathsAlone(t *testing.T) {
+	// Asked of the platform rather than built by hand. A path made of a
+	// separator and three names — `/srv/nikucooker` — is absolute on Unix and
+	// only *drive-relative* on Windows, where it is resolved against the
+	// current directory of whatever drive is in use. That is what the first
+	// version of this test got wrong, and the code it accused was right.
+	absolute, err := filepath.Abs(filepath.Join("srv", "nikucooker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	cfg := Default()
-	cfg.Storage.DataDir = filepath.Join(string(filepath.Separator), "srv", "nikucooker")
+	cfg.Storage.DataDir = absolute
 
 	if err := cfg.ResolvePaths(); err != nil {
 		t.Fatal(err)
 	}
 
-	if cfg.Storage.DataDir != filepath.Join(string(filepath.Separator), "srv", "nikucooker") {
+	if cfg.Storage.DataDir != absolute {
 		t.Errorf("data_dir = %q, want it unchanged", cfg.Storage.DataDir)
 	}
 }

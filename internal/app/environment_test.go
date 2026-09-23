@@ -48,7 +48,13 @@ func pathWithoutPython(t *testing.T) string {
 		if err != nil {
 			t.Skipf("%s is not installed", tool)
 		}
-		if err := os.Symlink(found, filepath.Join(dir, tool)); err != nil {
+
+		// Under the name it was found by, not under the bare tool name: on
+		// Windows the executable is ffmpeg.exe and LookPath will not find a
+		// file called ffmpeg, so a copy named for the bare tool is a PATH that
+		// has no FFmpeg on it — which fails the test for the wrong reason.
+		link := filepath.Join(dir, filepath.Base(found))
+		if err := os.Symlink(found, link); err != nil {
 			t.Fatal(err)
 		}
 	}

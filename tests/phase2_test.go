@@ -53,10 +53,19 @@ func pythonForTests(t *testing.T) string {
 		}
 	}
 
-	// Fall back to a system interpreter only if it can import the worker, so
-	// the skip message says what is actually missing.
+	// Fall back to a system interpreter only if it can run the worker, so the
+	// skip message says what is actually missing.
+	//
+	// The probe imports the protocol module rather than the package, and the
+	// difference is the whole reason this test used to fail on macOS and
+	// Windows: `import nikucooker_ai` succeeds against the source directory
+	// alone, because that directory is the working directory and therefore on
+	// sys.path. The worker starts, imports pydantic, and dies — so the tests
+	// ran, found no dependencies, and failed instead of skipping. The protocol
+	// module is what pulls those dependencies in, which makes it the honest
+	// question: can this interpreter run the worker, not can it see the source.
 	if path, err := exec.LookPath("python3"); err == nil {
-		check := exec.Command(path, "-c", "import nikucooker_ai")
+		check := exec.Command(path, "-c", "import nikucooker_ai.protocol")
 		check.Dir = filepath.Join(root, "ai")
 		if check.Run() == nil {
 			return path

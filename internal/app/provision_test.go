@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/AhsokaTano26/NikuCooker/internal/platform"
@@ -83,7 +84,19 @@ func TestInvalidateWorkerUnlatchesAFailedResolution(t *testing.T) {
 // worker will be launched with is the one under the data directory. If the
 // resolver did not look there, everything else would still pass and the install
 // would have achieved nothing.
+//
+// Unix-only, and not because the behaviour differs. The stand-in has to be
+// something the resolver can actually run, and a shell script is not: Windows
+// needs a real image, and a copy of an interpreter does not run without the
+// libraries beside it. The ordering itself — which candidate comes first, on
+// both platforms — is tested without running anything in
+// platform.TestProvisionedEnvironmentIsPreferred, which is where a change to it
+// would be caught.
 func TestTheProvisionedInterpreterIsWhatGetsResolved(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a runnable interpreter stand-in cannot be staged portably")
+	}
+
 	aiDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(aiDir, "nikucooker_ai"), 0o755); err != nil {
 		t.Fatal(err)
