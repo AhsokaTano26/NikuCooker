@@ -1,8 +1,8 @@
 package tests
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -106,10 +106,56 @@ func findPythonForTests() (string, string) {
 	if err != nil {
 		return "", fmt.Sprintf("the interpreter at %s cannot run the worker: %v", system, err)
 	}
-	if !bytes.Contains(output, []byte(`"ok":true`)) {
-		return "", fmt.Sprintf("the interpreter at %s reports a broken environment", system)
+
+	report, ok := parseSelfCheck(string(output))
+	if !ok {
+		return "", fmt.Sprintf("the interpreter at %s printed no self-check report", system)
 	}
-	return system, ""
+	if report.OK {
+		return system, ""
+	}
+
+	// The failing checks, by name, so the skip says what is missing rather than
+	// that something is.
+	var failed []string
+	for _, check := range report.Checks {
+		if !check.OK {
+			failed = append(failed, check.Name)
+		}
+	}
+	return "", fmt.Sprintf("the interpreter at %s cannot run the worker: %s",
+		system, strings.Join(failed, ", "))
+}
+
+// selfCheckReport is the worker's own verdict, as far as this file needs it.
+type selfCheckReport struct {
+	OK     bool `json:"ok"`
+	Checks []struct {
+		Name string `json:"name"`
+		OK   bool   `json:"ok"`
+	} `json:"checks"`
+}
+
+// parseSelfCheck reads the JSON line the worker prints.
+//
+// Decoded rather than searched for, and that is the whole point: the report
+// carries an `"ok"` for itself *and* one for every check inside it, so a
+// substring search for a passing check says the environment is fine when the
+// verdict above it says otherwise. That is exactly how this probe passed on a
+// macOS runner whose Python could import pydantic and not faster-whisper.
+func parseSelfCheck(output string) (selfCheckReport, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var report selfCheckReport
+		if err := json.Unmarshal([]byte(line), &report); err != nil {
+			continue
+		}
+		return report, true
+	}
+	return selfCheckReport{}, false
 }
 
 // workerConfig builds a config pointing at the project's worker.
