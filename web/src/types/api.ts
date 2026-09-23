@@ -216,8 +216,47 @@ export interface SystemOverview {
     schema_digest: string
     loaded_models: LoadedModel[]
   }
+  runtime: RuntimeView
   stats: SystemStats
   features: SystemFeatures
+}
+
+/** The steps an install goes through, in order. */
+export type RuntimePhase = 'detect' | 'interpreter' | 'dependencies' | 'verify'
+
+export type RuntimeStatus = 'idle' | 'running' | 'ready' | 'failed' | 'cancelled'
+
+/**
+ * The Python environment the worker runs from.
+ *
+ * `status` and `provisioned` answer different questions and disagree in the
+ * cases that matter: `provisioned` is whether an interpreter exists on disk, so
+ * it stays true across a restart of the server, while `status` describes what
+ * this process has done — which is idle on a server that did not perform the
+ * install.
+ */
+export interface RuntimeView {
+  /** Whether this installation can install an environment at all. */
+  available: boolean
+  /** Why not, when it cannot. Shown instead of a button that would fail. */
+  reason?: string
+
+  status: RuntimeStatus
+  phase?: RuntimePhase
+
+  provisioned: boolean
+  python?: string
+  runtime_dir: string
+  uv?: string
+
+  error_code?: string
+  error_message?: string
+  /** What to do about the failure, when it is one people hit often enough to
+   *  be worth recognising. */
+  remediation?: string
+
+  started_at?: string
+  finished_at?: string
 }
 
 /**

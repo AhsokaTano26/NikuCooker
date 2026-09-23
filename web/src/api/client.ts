@@ -382,6 +382,18 @@ export const system = {
    * close.
    */
   shutdown: (): Promise<void> => request('/system/shutdown', { method: 'POST' }),
+
+  /**
+   * Installs the AI environment, in the background.
+   *
+   * Resolves once the install has *started*. It takes minutes and reports
+   * through the `runtime.provision` event; this call is only the permission.
+   */
+  provisionRuntime: (): Promise<void> =>
+    request('/system/runtime/provision', { method: 'POST' }),
+
+  cancelProvision: (): Promise<void> =>
+    request('/system/runtime/provision/cancel', { method: 'POST' }),
 }
 
 

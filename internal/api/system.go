@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"github.com/AhsokaTano26/NikuCooker/internal/events"
 	"github.com/AhsokaTano26/NikuCooker/internal/platform"
 	"github.com/AhsokaTano26/NikuCooker/internal/project"
+	"github.com/AhsokaTano26/NikuCooker/internal/provision"
 	"github.com/AhsokaTano26/NikuCooker/pkg/protocol"
 )
 
@@ -40,9 +42,49 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 
 	s.fillCounts(ctx, &overview.Counts)
 	s.fillWorker(ctx, &overview.Worker)
+	s.fillRuntime(&overview.Runtime)
 	s.fillStats(ctx, &overview.Stats)
 
 	s.respond(w, http.StatusOK, overview)
+}
+
+// fillRuntime reports the state of the provisioned AI environment.
+//
+// Three separate questions, kept separate because they disagree in the cases
+// that matter: whether an install *could* run here, whether one is running, and
+// whether an interpreter exists on disk right now — which stays true across a
+// restart, and is the one the worker will actually be launched with.
+func (s *Server) fillRuntime(view *runtimeView) {
+	view.RuntimeDir = s.app.RuntimeDir()
+	view.Available, view.Reason = s.app.ProvisioningAvailable()
+	view.Status = string(provision.StatusIdle)
+
+	if view.RuntimeDir != "" {
+		python := platform.RuntimeVenvPython(view.RuntimeDir)
+		if _, err := os.Stat(python); err == nil {
+			view.Provisioned = true
+			view.Python = python
+		}
+	}
+
+	state := s.app.ProvisioningState()
+	view.Status = string(state.Status)
+	view.Phase = string(state.Phase)
+	view.ErrorCode = state.ErrorCode
+	view.ErrorMessage = state.ErrorMessage
+	view.Remediation = state.Remediation
+
+	if !state.StartedAt.IsZero() {
+		started := state.StartedAt
+		view.StartedAt = &started
+	}
+	view.FinishedAt = state.FinishedAt
+
+	// A finished install is reported as ready even on a process that did not
+	// perform it: the state lives in the data directory, not in this process.
+	if view.Provisioned && state.Status == provision.StatusIdle {
+		view.Status = string(provision.StatusReady)
+	}
 }
 
 // shutdownDelay is how long the shutdown waits after answering the request.

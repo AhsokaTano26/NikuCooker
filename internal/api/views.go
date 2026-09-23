@@ -100,11 +100,48 @@ type systemOverview struct {
 	Platform string  `json:"platform"`
 	UptimeS  float64 `json:"uptime_s"`
 
-	Counts systemCounts `json:"counts"`
-	Worker workerView   `json:"worker"`
-	Stats  systemStats  `json:"stats"`
+	Counts  systemCounts `json:"counts"`
+	Worker  workerView   `json:"worker"`
+	Runtime runtimeView  `json:"runtime"`
+	Stats   systemStats  `json:"stats"`
 
 	Features systemFeatures `json:"features"`
+}
+
+// runtimeView is the state of the provisioned Python environment.
+//
+// It is on the system overview rather than behind its own endpoint because the
+// System page already loads that and refetches when the stream resyncs, so a
+// tab opened halfway through an install finds the state without anyone having
+// to poll for it.
+type runtimeView struct {
+	// Available is whether this installation can install an environment at all.
+	//
+	// Read before the button is offered. A capability that is off is a refusal
+	// waiting to happen, and a button that fails is worse than a sentence
+	// saying why it was not offered.
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+
+	// Status is idle, running, ready, failed or cancelled.
+	Status string `json:"status"`
+
+	// Phase is which step of the install is running or failed.
+	Phase string `json:"phase,omitempty"`
+
+	// Provisioned is whether an interpreter exists right now, which is not the
+	// same question as whether this process has installed one.
+	Provisioned bool   `json:"provisioned"`
+	Python      string `json:"python,omitempty"`
+	RuntimeDir  string `json:"runtime_dir"`
+	UV          string `json:"uv,omitempty"`
+
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	Remediation  string `json:"remediation,omitempty"`
+
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 // systemFeatures reports what this installation is configured to do.

@@ -5,17 +5,102 @@ import { ApiError, api } from '@/api/client'
 import AppButton from '@/components/AppButton.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
+import type { RuntimePhase } from '@/types/api'
 
 const events = useEventStore()
 const overview = useAsync(() => api.system.overview())
 
 const shutdownError = ref<string | null>(null)
+const installError = ref<string | null>(null)
 
 onMounted(overview.run)
 watch(() => events.resyncCount, overview.run)
 
 const worker = computed(() => overview.data.value?.worker)
 const stats = computed(() => overview.data.value?.stats)
+const runtime = computed(() => overview.data.value?.runtime)
+
+/**
+ * The four steps, with where the install has got to.
+ *
+ * A list and not a bar. The installer narrates through uv, which writes a
+ * terminal animation rather than a number this could render, and a progress bar
+ * over an invented denominator moves backwards — which reads as a bug in the
+ * thing that is working.
+ */
+const INSTALL_STEPS: { phase: RuntimePhase; label: string }[] = [
+  { phase: 'detect', label: '检查环境' },
+  { phase: 'interpreter', label: '下载 Python 解释器（约 40 MB）' },
+  { phase: 'dependencies', label: '安装识别依赖（约 300 MB）' },
+  { phase: 'verify', label: '自检' },
+]
+
+type StepState = 'done' | 'current' | 'pending' | 'failed'
+
+function stepState(phase: RuntimePhase): StepState {
+  const state = runtime.value
+  if (state === undefined) return 'pending'
+
+  const current = INSTALL_STEPS.findIndex((step) => step.phase === state.phase)
+  const index = INSTALL_STEPS.findIndex((step) => step.phase === phase)
+
+  if (state.status === 'failed' && index === current) return 'failed'
+  if (index < current) return 'done'
+  if (index === current) return state.status === 'running' ? 'current' : 'done'
+  return 'pending'
+}
+
+function stepMark(phase: RuntimePhase): string {
+  switch (stepState(phase)) {
+    case 'done':
+      return '✓'
+    case 'current':
+      return '→'
+    case 'failed':
+      return '✗'
+    default:
+      return '·'
+  }
+}
+
+/**
+ * Installs the AI environment.
+ *
+ * Nothing happens without this click: the download is several hundred megabytes
+ * and may be on a metered connection, so it is offered rather than taken. The
+ * figure and the destination are both stated, because "it is about to download
+ * something" is not consent.
+ */
+async function install(): Promise<void> {
+  installError.value = null
+  try {
+    await api.system.provisionRuntime()
+    overview.run()
+  } catch (cause) {
+    installError.value = cause instanceof ApiError ? cause.message : String(cause)
+  }
+}
+
+async function cancelInstall(): Promise<void> {
+  installError.value = null
+  try {
+    await api.system.cancelProvision()
+    overview.run()
+  } catch (cause) {
+    installError.value = cause instanceof ApiError ? cause.message : String(cause)
+  }
+}
+
+// The stream carries the phases; this is what turns the last one into a
+// refreshed page — the interpreter path, and the worker status beside it.
+onMounted(() => {
+  events.on('runtime.provision', (event) => {
+    const data = event.data as { status?: string }
+    if (data.status !== 'running') {
+      overview.run()
+    }
+  })
+})
 
 function percent(value: number | null | undefined): string {
   return value === null || value === undefined ? '—' : `${value.toFixed(0)}%`
@@ -103,6 +188,91 @@ async function shutdown(): Promise<void> {
           协议摘要由 Go 与 Python 各自从同一组 fixture 计算得出，握手时逐字比较。
           两边不一致时服务拒绝启动，而不是在中途把消息解释错。
         </p>
+
+        <!--
+          Installing the environment the worker runs from.
+
+          Shown when it can be done here, and also when it cannot but the worker
+          has no interpreter — that is exactly when the reason is the useful
+          part, and hiding the whole card then would leave a user with a
+          disabled pipeline and no explanation.
+        -->
+        <div
+          v-if="runtime && (runtime.available || !worker?.python)"
+          class="mt-3 border-t border-line pt-3"
+        >
+          <p class="text-xs text-ink-faint">运行环境</p>
+
+          <template v-if="runtime.status === 'running'">
+            <ul class="mt-2 space-y-1 text-sm">
+              <li
+                v-for="step in INSTALL_STEPS"
+                :key="step.phase"
+                class="flex gap-2"
+                :class="{
+                  'text-ink': stepState(step.phase) === 'current',
+                  'text-ink-muted': stepState(step.phase) === 'done',
+                  'text-status-failed': stepState(step.phase) === 'failed',
+                  'text-ink-faint': stepState(step.phase) === 'pending',
+                }"
+              >
+                <span class="w-3 shrink-0">{{ stepMark(step.phase) }}</span>
+                <span>{{ step.label }}</span>
+              </li>
+            </ul>
+            <!-- No bar and no percentage: see the comment on INSTALL_STEPS. -->
+            <AppButton class="mt-3" size="sm" variant="ghost" @click="cancelInstall">
+              取消安装
+            </AppButton>
+          </template>
+
+          <template v-else-if="runtime.status === 'failed' || runtime.status === 'cancelled'">
+            <p
+              v-if="runtime.remediation"
+              class="mt-2 rounded border border-status-warn/40 bg-surface p-3 text-sm text-status-warn"
+            >
+              {{ runtime.remediation }}
+            </p>
+            <pre
+              class="mt-2 max-h-40 overflow-auto rounded border border-line bg-surface-sunken p-2 text-xs whitespace-pre-wrap text-ink-muted"
+            >{{ runtime.error_message }}</pre>
+            <AppButton class="mt-3" size="sm" variant="primary" @click="install">
+              重新安装
+            </AppButton>
+          </template>
+
+          <template v-else-if="runtime.provisioned">
+            <p class="mt-1 text-sm text-ink-muted">
+              已安装，不会再下载一次。
+            </p>
+            <p class="mt-1 truncate font-mono text-xs text-ink-faint" :title="runtime.python">
+              {{ runtime.python }}
+            </p>
+          </template>
+
+          <template v-else-if="runtime.available">
+            <p class="mt-1 text-sm text-ink-muted">
+              语音识别需要一个 Python 环境。这个压缩包里带了安装工具和 worker 源码，
+              但没有带 Python 本身——首次安装会下载解释器和依赖，约 300 MB，只下载这一次。
+            </p>
+            <p class="mt-1 text-xs text-ink-faint">
+              装在 <span class="font-mono">{{ runtime.runtime_dir }}</span>，
+              删掉这个目录即可回收空间。
+            </p>
+            <AppButton class="mt-3" size="sm" variant="primary" @click="install">
+              安装 AI 运行环境
+            </AppButton>
+          </template>
+
+          <p v-else class="mt-1 text-sm text-ink-muted">{{ runtime.reason }}</p>
+
+          <p
+            v-if="installError"
+            class="mt-2 rounded border border-status-failed/40 bg-surface p-3 text-sm text-status-failed"
+          >
+            {{ installError }}
+          </p>
+        </div>
       </section>
 
       <section class="rounded border border-line bg-surface-raised p-4">

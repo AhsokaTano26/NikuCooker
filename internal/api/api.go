@@ -97,6 +97,8 @@ func (s *Server) buildRoutes() *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/system", s.getSystem)
 	mux.HandleFunc("GET /api/v1/system/health", s.getHealth)
 	mux.HandleFunc("POST /api/v1/system/shutdown", s.requestProcessShutdown)
+	mux.HandleFunc("POST /api/v1/system/runtime/provision", s.provisionRuntime)
+	mux.HandleFunc("POST /api/v1/system/runtime/provision/cancel", s.cancelProvision)
 	mux.HandleFunc("GET /api/v1/events", s.getEvents)
 
 	mux.HandleFunc("POST /api/v1/uploads", s.createUpload)

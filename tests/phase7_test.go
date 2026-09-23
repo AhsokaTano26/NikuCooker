@@ -1156,3 +1156,59 @@ func TestPhase7ShutdownEndpoint(t *testing.T) {
 		}
 	})
 }
+
+// Installing the AI environment says why, when it cannot be done here.
+//
+// The interface asks first and shows the reason instead of a button. This is
+// the server half of that: a request that arrives anyway is answered with the
+// reason rather than with a failure — "the AI worker's source is missing next to
+// the program" tells a user what to do, and a 500 does not.
+func TestPhase7ProvisioningReportsWhyItCannotRun(t *testing.T) {
+	h := newAPIHarness(t)
+
+	// The test harness has no ai/ directory beside the binary and none in the
+	// working directory, which is the state of an archive that was extracted
+	// without its ai/ folder.
+	status, body, raw := h.request(http.MethodPost, "/api/v1/system/runtime/provision", nil)
+
+	if status != http.StatusPreconditionFailed {
+		t.Fatalf("status = %d, want 412: %s", status, raw)
+	}
+	if code := errorCode(body); code != "UNAVAILABLE" {
+		t.Errorf("code = %q, want UNAVAILABLE: %s", code, raw)
+	}
+
+	nested, _ := body["error"].(map[string]any)
+	message, _ := nested["message"].(string)
+	if !strings.Contains(message, "ai/") {
+		t.Errorf("the reason does not say what is missing: %q", message)
+	}
+
+	// And the same refusal is on the status the interface reads, so the card can
+	// explain itself without waiting for a click.
+	_, overview, raw := h.request(http.MethodGet, "/api/v1/system", nil)
+	runtime, ok := overview["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("the system overview carries no runtime block: %s", raw)
+	}
+	if runtime["available"] != false {
+		t.Errorf("provisioning was reported as available: %s", raw)
+	}
+	if reason, _ := runtime["reason"].(string); reason == "" {
+		t.Error("provisioning was refused with no reason given")
+	}
+}
+
+// Cancelling with nothing to cancel is a conflict, not a success.
+func TestPhase7CancellingAnInstallThatIsNotRunning(t *testing.T) {
+	h := newAPIHarness(t)
+
+	status, body, raw := h.request(http.MethodPost, "/api/v1/system/runtime/provision/cancel", nil)
+
+	if status != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", status, raw)
+	}
+	if code := errorCode(body); code != "CONFLICT" {
+		t.Errorf("code = %q, want CONFLICT: %s", code, raw)
+	}
+}
