@@ -28,6 +28,9 @@ function payload(
   status: WorkerStatus,
   detail?: string,
   install: { status: RuntimeStatus; phase?: string } = { status: 'idle' },
+  // Whether an install could be run here at all. False when the worker's source
+  // is missing next to the binary, which is the one case where it cannot be.
+  available = status === 'missing' || status === 'failed',
 ): Partial<SystemOverview> {
   return {
     version: 'test',
@@ -45,7 +48,8 @@ function payload(
       loaded_models: [],
     },
     runtime: {
-      available: status === 'missing' && install.status !== 'running',
+      available: available && install.status !== 'running',
+      reason: available ? undefined : 'the AI worker\'s source is missing',
       status: install.status,
       phase: install.phase,
       provisioned: status === 'ready',
@@ -64,8 +68,9 @@ async function dashboard(
   status: WorkerStatus,
   detail?: string,
   install?: { status: RuntimeStatus; phase?: string },
+  available?: boolean,
 ) {
-  overview.mockResolvedValue(payload(status, detail, install))
+  overview.mockResolvedValue(payload(status, detail, install, available))
 
   const wrapper = mount(DashboardView, {
     global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
@@ -125,6 +130,28 @@ describe('the dashboard environment warning', () => {
     expect(text).toContain('可正常使用')
     expect(text).toContain('/data/runtime/venv/bin/python')
     expect(text).toContain('/data/runtime')
+  })
+
+  // A button is offered only when pressing it can work.
+  //
+  // A binary with no ai/ directory beside it has nothing to install *into*, and
+  // the System page says so. Sending someone there with a button that promised
+  // the opposite is how a page teaches people to distrust it.
+  it('explains rather than offering an install that cannot run', async () => {
+    const wrapper = await dashboard(
+      'missing',
+      "app: cannot find the AI worker package (looked in /tmp/noai/ai, /tmp/noai)",
+      undefined,
+      false,
+    )
+    const text = wrapper.text()
+
+    expect(text).toContain('AI 运行环境不可用')
+    expect(text).toContain("the AI worker's source is missing")
+    // The thing that would have been a broken promise.
+    expect(text).not.toContain('去安装')
+    // And the interpreter's own words are still there to search for.
+    expect(text).toContain('cannot find the AI worker package')
   })
 
   // The half that keeps the warning worth reading.

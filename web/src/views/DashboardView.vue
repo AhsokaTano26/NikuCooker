@@ -83,6 +83,23 @@ const environmentProblem = computed(() => {
   if (runtime.value?.status === 'running') return null
 
   const status = worker.value?.status
+  if (status !== 'missing' && status !== 'failed') return null
+
+  // A button is offered only when pressing it can work.
+  //
+  // Not every broken environment can be fixed by installing one: a binary that
+  // has no ai/ directory beside it has nothing to install *into*, and the
+  // System page says so. Sending someone there with a button that promised the
+  // opposite is how a page teaches people to distrust it — so in that case the
+  // card explains, and offers nothing.
+  if (!runtime.value?.available) {
+    return {
+      title: 'AI 运行环境不可用',
+      body: runtime.value?.reason ?? '这个安装无法自行准备运行环境。',
+      action: '',
+    }
+  }
+
   if (status === 'missing') {
     return {
       title: '还没有安装 AI 运行环境',
@@ -91,14 +108,11 @@ const environmentProblem = computed(() => {
       action: '去安装',
     }
   }
-  if (status === 'failed') {
-    return {
-      title: 'AI 运行环境有问题',
-      body: '找到了解释器，但它加载不了识别组件。重新安装一次通常就能解决。',
-      action: '重新安装',
-    }
+  return {
+    title: 'AI 运行环境有问题',
+    body: '找到了解释器，但它加载不了识别组件。重新安装一次通常就能解决。',
+    action: '重新安装',
   }
-  return null
 })
 
 const cards = computed(() => {
@@ -147,7 +161,12 @@ function percent(value: number | null | undefined): string {
             {{ worker.detail }}
           </p>
         </div>
-        <AppButton variant="primary" size="sm" @click="router.push('/system')">
+        <AppButton
+          v-if="environmentProblem.action"
+          variant="primary"
+          size="sm"
+          @click="router.push('/system')"
+        >
           {{ environmentProblem.action }}
         </AppButton>
       </div>

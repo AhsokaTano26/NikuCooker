@@ -92,8 +92,12 @@ func (a *App) ProvisioningAvailable() (bool, string) {
 	}
 
 	if _, err := a.AIDir(); err != nil {
-		return false, "the AI worker's source is missing next to the program; " +
-			"extract the archive again, keeping its ai/ directory beside the binary"
+		// Named both ways round, because the two situations look identical from
+		// here and only the user knows which one they are in: an archive that
+		// was not extracted whole, and a binary that was copied out of one.
+		return false, "the AI worker's source is missing: it belongs in an ai/ " +
+			"directory beside the program. Extract the release archive as a whole, " +
+			"or point ai.dir at a checkout's ai/ directory"
 	}
 
 	exeDir := ""
