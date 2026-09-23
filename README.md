@@ -74,6 +74,11 @@ repository. What is published is the code and this file.
 
 ## Requirements
 
+For a release binary, the only prerequisite is **FFmpeg** and **ffprobe** on
+`PATH`; the AI environment installs itself — see [INSTALL.md](INSTALL.md).
+
+For a checkout, which is to say for building or working on the code:
+
 - **Go** 1.26 or newer
 - **Python** 3.12–3.14, managed with [uv](https://docs.astral.sh/uv/)
 - **Node** 24+ and **pnpm** 10+ (only to build the web interface)
@@ -114,8 +119,12 @@ users are never made to download it. Both mount `./data`, `./models` and
 Every tagged release publishes a binary for Windows, macOS and Linux, with the
 web interface already embedded in it — no Go, Node or build toolchain needed.
 
-See **[INSTALL.md](INSTALL.md)** for the platform steps, and for the two things
-the archives deliberately do not bundle: Python and FFmpeg.
+The archive also carries the AI worker's source and a copy of `uv`. The Python
+interpreter and the AI dependencies they need are installed once, from the
+System page of the interface, by clicking a button that says how much it will
+download and where it will put it.
+
+See **[INSTALL.md](INSTALL.md)** for the platform steps.
 
 ## Development
 

@@ -68,6 +68,11 @@ LLM 翻译放在 Go 而不是 Python 里是刻意的：调用一个 HTTP API 需
 
 ## 环境要求
 
+用发布版二进制的话，唯一的前提是 **FFmpeg** 和 **ffprobe** 在 `PATH` 里；
+AI 运行环境会自己装好——见 [INSTALL.zh-CN.md](INSTALL.zh-CN.md)。
+
+从源码构建、或者要改代码的话：
+
 - **Go** 1.26 或更新
 - **Python** 3.12–3.14，用 [uv](https://docs.astral.sh/uv/) 管理
 - **Node** 24+ 和 **pnpm** 10+（只在构建网页界面时需要）
@@ -106,8 +111,10 @@ CUDA 镜像是单独构建的，因为它要大出好几个 GB；用 CPU 的人�
 每次打 tag 发布时都会产出 Windows、macOS 和 Linux 的二进制，网页界面已经嵌在里面，
 不需要 Go、Node 或任何构建工具链。
 
-具体步骤见 **[INSTALL.zh-CN.md](INSTALL.zh-CN.md)**，里面也写了压缩包**刻意不打包**的
-两样东西：Python 和 FFmpeg。
+压缩包里还带了 AI worker 的源码和一份 `uv`。它们需要的 Python 解释器和依赖，是在网页的
+「系统」页上点一下按钮装好的——按钮上写着要下载多少、装到哪里。
+
+具体步骤见 **[INSTALL.zh-CN.md](INSTALL.zh-CN.md)**。
 
 ## 开发
 

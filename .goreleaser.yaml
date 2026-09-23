@@ -115,16 +115,22 @@ release:
   footer: |
     ## Installation
 
-    Native binaries do not bundle Python. To use one, install Python 3.12 and
-    the AI dependencies:
+    Extract the archive and run the binary. The web interface is embedded in it,
+    and so is everything the AI worker needs except Python itself.
 
-    ```
-    git clone https://github.com/AhsokaTano26/NikuCooker
-    cd NikuCooker/ai && uv sync
-    ```
+    Open <http://localhost:8080/system> and click once to install the AI
+    environment — a Python interpreter and the recognition dependencies, about
+    300 MB, downloaded once into the data directory. Nothing is downloaded
+    before you click.
 
-    If you would rather not manage a Python environment, use the Docker image
-    instead — it is the recommended path:
+    FFmpeg and ffprobe must be on your PATH. `nikucooker doctor` checks
+    everything and says what to do about whatever is missing.
+
+    See [INSTALL.md](https://github.com/AhsokaTano26/NikuCooker/blob/main/INSTALL.md)
+    for the platform-specific steps.
+
+    If you would rather not manage any of this, use the Docker image instead —
+    it is the recommended path for a server:
 
     ```
     docker compose up -d

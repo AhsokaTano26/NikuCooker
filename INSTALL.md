@@ -21,21 +21,51 @@ There is no Windows arm64 build: the Python packages the worker needs have no
 arm64 Windows stack in practice, and a binary that cannot find a worker is a
 promise we could not keep.
 
-## Two things are not bundled
+**Keep the whole extracted folder together.** The archive contains a `nikucooker`
+binary, an `ai/` directory with the worker's source, and a copy of `uv`. The
+binary looks for those beside itself, and the environment it builds later
+records the absolute path it was built from — so moving the folder afterwards
+means installing again.
 
-**Python.** Speech recognition runs in a Python worker, and including it would
-add 400 MB–3 GB to every download. The binary runs without it — recognition is
-the only thing that does not.
+## The AI environment
 
-To install the worker, clone the repository and build its environment:
+Speech recognition runs in a Python worker, and the archive deliberately does
+not carry Python itself or the AI dependencies: that would add 400 MB–3 GB to
+every download, including for people who never run a job. What the archive
+carries is everything needed to install them.
+
+So there are two steps, and the second one is a button:
+
+1. Run the binary. The server starts immediately and the interface works —
+   everything except recognition.
+2. Open **System** (`http://localhost:8080/system`) and click
+   **安装 AI 运行环境** / *Install the AI runtime*.
+
+That downloads a Python interpreter and the dependencies — about 300 MB — into
+the data directory, checks what it installed, and reports each step as it goes.
+It happens once. Nothing is downloaded before you click, and the size and the
+destination are both shown first.
+
+If it fails, the page shows `uv`'s own error, and for the failures people
+actually hit — a corporate proxy, a full disk, a TLS-inspecting firewall — a
+line saying what to do about it. The install can be cancelled, and a cancelled
+install is cleaned up so retrying works.
+
+Once it is done, `nikucooker doctor` reports the worker as available, and the
+pipeline runs.
+
+### If you would rather install it yourself
+
+Setting `ai.python` to an interpreter disables the button: an interpreter you
+chose is the one that runs. In that case build the environment the ordinary way:
 
 ```bash
 git clone https://github.com/AhsokaTano26/NikuCooker
 cd NikuCooker/ai && uv sync
 ```
 
-Then put the binary in that checkout's root, beside `ai/`, and it finds the
-worker on its own:
+Then point the binary at it — either put the binary in that checkout's root,
+beside `ai/`, where it will be found on its own:
 
 ```bash
 cp /path/to/nikucooker /path/to/NikuCooker/
@@ -44,7 +74,7 @@ cp /path/to/nikucooker /path/to/NikuCooker/
 (Extracting the archive *into* the checkout instead would overwrite the
 repository's own README and LICENSE — copy the binary, not the archive.)
 
-Anywhere else, name the directory in the configuration file:
+or name the directory in the configuration file:
 
 ```yaml
 ai:
@@ -54,13 +84,27 @@ ai:
 `nikucooker config path` says which file that is; `nikucooker config init`
 writes a commented one if there is not one already.
 
-**FFmpeg and `ffprobe`**, which must be on `PATH`. Hard subtitles additionally
-need an FFmpeg built with `libass`, and a CJK font installed — without either,
-burned-in subtitles render as empty boxes. `doctor` names both if they are
-missing.
+### FFmpeg is still not bundled
+
+**FFmpeg and `ffprobe`** must be on `PATH` — they are a system package on every
+platform and are not worth duplicating. Hard subtitles additionally need an
+FFmpeg built with `libass`, and a CJK font installed; without either, burned-in
+subtitles render as empty boxes. `doctor` names both if they are missing, and
+says how to fix them.
 
 Run `nikucooker doctor` first. It checks all of the above and prints what to do
 about anything missing, rather than failing later in the middle of a job.
+
+### A proxy, or a firewall that inspects TLS
+
+`HTTPS_PROXY` and `SSL_CERT_FILE` are passed through to the installer, so the
+usual settings work. One thing is worth knowing: `uv` uses its own TLS stack
+rather than the operating system's trust store, so a network that re-signs
+certificates — common on managed laptops — fails with `invalid peer certificate:
+UnknownIssuer` even though every browser on the machine is happy. Pointing
+`SSL_CERT_FILE` at your organisation's CA bundle fixes it, or `UV_NATIVE_TLS=1`
+makes it use the system trust store. The install page recognises this failure
+and says so rather than leaving you with the raw error.
 
 ## macOS
 
@@ -98,9 +142,12 @@ folder you extracted it into to your `PATH`.
 Two Windows-specific things `doctor` checks:
 
 - **Long paths.** The 260-character `MAX_PATH` limit is easy to exceed under
-  `%LOCALAPPDATA%\NikuCooker\projects\<uuid>\artifacts\...`. Either enable long
-  path support in the registry (`LongPathsEnabled`), or point `--data-dir` at
-  somewhere short such as `C:\niku`.
+  `%LOCALAPPDATA%\NikuCooker\projects\<uuid>\artifacts\...`, and the AI
+  environment makes it worse — a path through `runtime\venv\Lib\site-packages\`
+  is already long before a project exists. **Set `--data-dir` somewhere short
+  such as `C:\niku` before installing the environment**, or enable long paths in
+  the registry (`LongPathsEnabled`). Moving the data directory afterwards means
+  installing again.
 - **NVIDIA GPU.** The `cuda` extra needs a CUDA 12.x runtime providing
   `libcublas`; `doctor` test-loads it rather than assuming. Without one,
   recognition runs on the CPU.
@@ -115,10 +162,11 @@ tar xzf nikucooker_<version>_linux_amd64.tar.gz
 
 The binary is statically linked and built without cgo, so it does not depend on
 the host's libc and runs on any distribution. Both `amd64` and `arm64` are
-published.
+published. The copy of `uv` it carries does need a glibc of 2.28 or newer, which
+every distribution still receiving updates has.
 
-On a server, [Docker](README.md#docker) remains the recommended path: it brings
-FFmpeg and the Python worker with it, and neither is bundled here.
+On a server, [Docker](README.md#docker) remains the recommended path: FFmpeg and
+the Python worker are both in the image, and the environment installs nothing.
 
 ## Where it puts your files
 
@@ -126,6 +174,7 @@ FFmpeg and the Python worker with it, and neither is bundled here.
 |---|---|---|
 | Data and config | `~/Library/Application Support/NikuCooker` | `%LOCALAPPDATA%\NikuCooker` |
 | Models | `<data>/models` | `<data>/models` |
+| AI environment | `<data>/runtime` | `<data>/runtime` |
 
 On Linux, data and config follow the XDG directories
 (`$XDG_DATA_HOME/nikucooker`, `$XDG_CONFIG_HOME/nikucooker`).
@@ -135,3 +184,11 @@ the data directory rather than a cache directory, because a downloaded
 `large-v3` is several gigabytes of user-visible state that a cleanup tool should
 not silently evict. `doctor` prints every path, so "where did it put my files"
 is answered before it is asked.
+
+`<data>/runtime` is the AI environment — the interpreter, the dependencies and
+the download cache, about 700 MB. Deleting it reclaims all of that and costs
+nothing but installing again.
+
+**Choose the data directory before installing the environment.** A Python
+environment records absolute paths, so moving it afterwards leaves one that
+exists and does not run. `doctor` says so in as many words if that happens.
