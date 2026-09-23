@@ -106,7 +106,15 @@ checksum:
   name_template: checksums.txt
 
 sboms:
-  - artifacts: archive
+  # The binaries, not the archives.
+  #
+  # syft reads a .tar.gz as if it were a container image and gives up on the
+  # first entry — "failed to create file in destination: is a directory" — which
+  # is where the first two tagged releases died, two minutes in. A Go binary it
+  # reads directly, module list and all, and that is the document worth having:
+  # the dependencies are compiled into it, so the binary is what the SBOM is a
+  # bill of materials *for*. One per target, named for it.
+  - artifacts: binary
 
 snapshot:
   version_template: '{{ incpatch .Version }}-next'
