@@ -26,6 +26,19 @@ export function pipelineProgress(view: PipelineView | null | undefined): {
   const stages = view?.stages ?? []
   if (stages.length === 0) return { fraction: 0, completed: 0, current: 0, total: 0 }
 
+  // Older runs can leave a disabled optional stage recorded as `pending` even
+  // though the job itself has reached its authoritative terminal state. Once
+  // the job says it completed, showing 91% forever is less truthful than
+  // treating every stage as settled.
+  if (view?.job?.status === 'completed') {
+    return {
+      fraction: 1,
+      completed: stages.length,
+      current: stages.length,
+      total: stages.length,
+    }
+  }
+
   const completed = stages.filter((stage) =>
     ['completed', 'cached', 'skipped'].includes(stage.status),
   ).length

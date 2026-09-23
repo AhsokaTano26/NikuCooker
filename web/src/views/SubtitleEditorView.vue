@@ -132,6 +132,7 @@ const draftEnd = ref('')
 const draftSpeaker = ref('')
 const draftTags = ref('')
 const saving = ref(false)
+const reviewing = ref(false)
 const actionError = ref<string | null>(null)
 const notice = ref<string | null>(null)
 
@@ -179,14 +180,15 @@ function patchLine(updated: Segment): void {
   if (selected.value?.id === updated.id) seedDraft(updated)
 }
 
-async function save(): Promise<void> {
+async function save(): Promise<Segment | null> {
   const line = selected.value
-  if (!line || !dirty.value) return
+  if (!line) return null
+  if (!dirty.value) return line
   const start = Number(draftStart.value)
   const end = Number(draftEnd.value)
   if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
     actionError.value = '时间码无效：结束时间必须大于开始时间。'
-    return
+    return null
   }
 
   saving.value = true
@@ -201,14 +203,16 @@ async function save(): Promise<void> {
     })
     patchLine(updated)
     notice.value = `第 ${updated.ordinal} 条已保存`
+    return updated
   } catch (cause) {
     actionError.value = cause instanceof ApiError ? cause.message : String(cause)
+    return null
   } finally {
     saving.value = false
   }
 }
 
-async function lineAction(action: 'translate' | 'split' | 'merge' | 'approve' | 'reject'): Promise<void> {
+async function lineAction(action: 'translate' | 'split' | 'merge'): Promise<void> {
   const line = selected.value
   if (!line) return
   actionError.value = null
@@ -220,16 +224,62 @@ async function lineAction(action: 'translate' | 'split' | 'merge' | 'approve' | 
     } else if (action === 'merge') {
       await api.segments.merge(projectId.value, line.id, true)
       await resetList()
-    } else {
-      patchLine(await api.segments.review(
-        projectId.value,
-        line.id,
-        action === 'approve' ? 'approved' : 'rejected',
-      ))
     }
   } catch (cause) {
     actionError.value = cause instanceof ApiError ? cause.message : String(cause)
   }
+}
+
+async function advanceReview(reviewedOrdinal: number): Promise<void> {
+  if (onlyReview.value) {
+    await resetList()
+    const next = rows.value[0]
+    if (next) {
+      seedDraft(next)
+    } else {
+      selected.value = null
+      const query = { ...route.query }
+      delete query['segment']
+      void router.replace({ query })
+    }
+    return
+  }
+
+  const next = loadedLines().find((line) => line.ordinal > reviewedOrdinal && line.needs_review)
+  if (next) seedDraft(next)
+}
+
+async function decideCurrent(state: 'approved' | 'pending'): Promise<void> {
+  const line = selected.value
+  if (!line || reviewing.value || saving.value) return
+
+  reviewing.value = true
+  actionError.value = null
+  try {
+    const saved = dirty.value ? await save() : line
+    if (!saved) return
+
+    const updated = await api.segments.review(projectId.value, saved.id, state)
+    patchLine(updated)
+    if (state === 'approved') {
+      notice.value = `第 ${updated.ordinal} 条已通过`
+      await advanceReview(updated.ordinal)
+    } else {
+      notice.value = `第 ${updated.ordinal} 条已保留在待审队列`
+    }
+  } catch (cause) {
+    actionError.value = cause instanceof ApiError ? cause.message : String(cause)
+  } finally {
+    reviewing.value = false
+  }
+}
+
+function approveCurrent(): void {
+  void decideCurrent('approved')
+}
+
+function keepCurrentPending(): void {
+  void decideCurrent('pending')
 }
 
 const checked = ref<Set<string>>(new Set())
@@ -425,7 +475,7 @@ const FILTER_OPTIONS = [
 
 function reviewLabel(line: Segment): string {
   if (line.review_state === 'approved') return '已通过'
-  if (line.review_state === 'rejected') return '已打回'
+  if (line.review_state === 'rejected') return '未通过'
   if (line.is_edited) return '已修改'
   if (line.needs_review) return '待审校'
   return '未处理'
@@ -462,8 +512,8 @@ function previewLabel(value: EditorMedia | null): string {
       <div class="ml-auto flex items-center gap-2">
         <span v-if="dirty" class="text-xs text-status-running">有未保存修改</span>
         <span v-else-if="notice" class="text-xs text-status-done">{{ notice }}</span>
-        <AppButton variant="primary" size="sm" :disabled="!dirty || saving" @click="save">
-          {{ saving ? '保存中…' : '保存字幕' }}
+        <AppButton variant="secondary" size="sm" :disabled="!dirty || saving || reviewing" @click="save">
+          {{ saving ? '保存中…' : '仅保存修改' }}
         </AppButton>
         <a
           :href="`/api/v1/projects/${projectId}/subtitles.srt`"
@@ -475,6 +525,20 @@ function previewLabel(value: EditorMedia | null): string {
     <p v-if="actionError" class="m-3 whitespace-pre-line rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
       {{ actionError }}
     </p>
+
+    <section
+      class="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-1 border-b border-line bg-surface-raised px-4 py-2 text-xs text-ink-muted"
+      aria-label="审校方法"
+    >
+      <strong class="font-medium text-ink">审校方法</strong>
+      <ol class="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <li><span class="text-accent">1</span> 选择问题段</li>
+        <li><span class="text-accent">2</span> 播放核对原音</li>
+        <li><span class="text-accent">3</span> 修改译文或时间</li>
+        <li><span class="text-accent">4</span> 保存并通过</li>
+      </ol>
+      <span class="ml-auto text-ink-faint">质量检查会在右侧说明待审原因</span>
+    </section>
 
     <div class="grid min-h-0 flex-1 grid-cols-[minmax(520px,1fr)_340px] gap-3 p-3">
       <div class="flex min-h-0 flex-col gap-3">
@@ -547,15 +611,29 @@ function previewLabel(value: EditorMedia | null): string {
             <span class="text-xs text-ink-muted">已选 {{ checked.size }} 条</span>
             <AppButton size="sm" variant="ghost" @click="bulk('approve')">批量通过</AppButton>
             <AppButton size="sm" variant="ghost" @click="bulk('pending')">标记待审</AppButton>
-            <AppButton size="sm" variant="danger" @click="bulk('reject')">批量打回</AppButton>
             <AppButton size="sm" variant="ghost" @click="bulk('retranslate')">批量重译</AppButton>
           </div>
 
           <div v-if="listError" class="p-4 text-sm text-status-failed">
             {{ listError }} <AppButton size="sm" variant="ghost" @click="resetList">重试</AppButton>
           </div>
-          <div v-else-if="total === 0 && !listLoading" class="flex flex-1 items-center justify-center p-8 text-sm text-ink-muted">
-            {{ Object.keys(rows).length === 0 && !search && !onlyReview ? '还没有字幕，请先在项目页运行任务。' : '没有符合条件的字幕。' }}
+          <div v-else-if="total === 0 && !listLoading" class="flex flex-1 items-center justify-center p-8 text-center">
+            <div v-if="onlyReview && !search && !severity" class="max-w-sm">
+              <h3 class="text-sm font-medium text-status-done">待审校字幕已经全部处理完</h3>
+              <p class="mt-2 text-xs leading-5 text-ink-muted">
+                返回项目页生成最终成品。识别和翻译结果会复用，只重新生成受修改影响的文件。
+              </p>
+              <RouterLink
+                data-test="finish-review"
+                :to="`/projects/${projectId}`"
+                class="mt-3 inline-flex rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink outline-none hover:brightness-110 focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                返回并生成最终成品
+              </RouterLink>
+            </div>
+            <p v-else class="text-sm text-ink-muted">
+              {{ Object.keys(rows).length === 0 && !search && !onlyReview ? '还没有字幕，请先在项目页运行任务。' : '没有符合条件的字幕。' }}
+            </p>
           </div>
           <div v-else ref="scroller" class="min-h-0 flex-1 overflow-auto" @scroll="onScroll">
             <div :style="{ height: `${topSpace}px` }" />
@@ -612,7 +690,7 @@ function previewLabel(value: EditorMedia | null): string {
 
       <aside class="flex min-h-0 flex-col overflow-hidden rounded border border-line bg-surface-raised">
         <template v-if="selected">
-          <header class="shrink-0 border-b border-line px-4 py-3">
+          <header data-test="selected-segment" class="shrink-0 border-b border-line px-4 py-3">
             <div class="flex items-center justify-between gap-2">
               <h3 class="text-sm font-medium">第 {{ selected.ordinal }} 条</h3>
               <AppBadge :tone="selected.needs_review ? 'warn' : 'neutral'">{{ reviewLabel(selected) }}</AppBadge>
@@ -661,16 +739,39 @@ function previewLabel(value: EditorMedia | null): string {
               <AppButton variant="ghost" size="sm" @click="lineAction('split')">从中间拆分</AppButton>
               <AppButton variant="ghost" size="sm" @click="lineAction('merge')">合并下一条</AppButton>
               <AppButton variant="ghost" size="sm" @click="seekTo(selected.start)">定位播放</AppButton>
-              <AppButton variant="ghost" size="sm" @click="lineAction('approve')">通过</AppButton>
-              <AppButton variant="danger" size="sm" @click="lineAction('reject')">打回</AppButton>
             </div>
           </div>
 
-          <footer class="flex shrink-0 items-center gap-2 border-t border-line p-3">
-            <AppButton variant="primary" class="flex-1" :disabled="!dirty || saving" @click="save">
-              {{ saving ? '保存中…' : '保存修改' }}
-            </AppButton>
-            <AppButton variant="ghost" :disabled="!dirty" @click="resetDraft">放弃</AppButton>
+          <footer class="shrink-0 space-y-2 border-t border-line p-3">
+            <div class="flex items-center gap-2">
+              <AppButton
+                v-if="dirty"
+                data-test="save-and-approve"
+                variant="primary"
+                class="flex-1"
+                :disabled="saving || reviewing"
+                @click="approveCurrent"
+              >
+                {{ saving || reviewing ? '处理中…' : '保存并通过' }}
+              </AppButton>
+              <AppButton
+                v-else
+                data-test="approve-segment"
+                variant="primary"
+                class="flex-1"
+                :disabled="reviewing"
+                @click="approveCurrent"
+              >
+                {{ reviewing ? '处理中…' : '直接通过' }}
+              </AppButton>
+              <AppButton variant="secondary" :disabled="saving || reviewing" @click="keepCurrentPending">
+                保留待审
+              </AppButton>
+            </div>
+            <div class="flex items-center justify-between gap-3 text-xs text-ink-faint">
+              <span>通过后会自动进入下一条；保留待审不会移出队列。</span>
+              <AppButton v-if="dirty" variant="ghost" size="sm" @click="resetDraft">放弃修改</AppButton>
+            </div>
           </footer>
         </template>
         <div v-else class="flex flex-1 items-center justify-center p-8 text-center text-sm text-ink-muted">

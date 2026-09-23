@@ -44,4 +44,17 @@ describe('workbench timeline helpers', () => {
 
     expect(pipelineProgress(view)).toEqual({ fraction: 0.5, completed: 1, current: 2, total: 3 })
   })
+
+  it('treats a completed job as fully settled even when an optional stage stayed pending', () => {
+    const view = {
+      project_id: 'p',
+      job: { id: 'j', status: 'completed', progress: 1 },
+      stages: [
+        { name: 'a', label: 'A', ordinal: 1, status: 'completed', progress: 1, artifact_id: null },
+        { name: 'optional', label: '可选阶段', ordinal: 2, status: 'pending', progress: 0, artifact_id: null },
+      ],
+    } satisfies PipelineView
+
+    expect(pipelineProgress(view)).toEqual({ fraction: 1, completed: 2, current: 2, total: 2 })
+  })
 })

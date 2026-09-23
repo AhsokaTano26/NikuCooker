@@ -190,6 +190,12 @@ watch(projectId, () => {
 const running = computed(() => current.value?.job?.status === 'running')
 const progressSummary = computed(() => pipelineProgress(current.value))
 const activeStage = computed(() => current.value?.stages.find((stage) => stage.status === 'running'))
+const runButtonLabel = computed(() => current.value?.job ? '重新运行全部流程' : '开始处理')
+const progressTone = computed(() => {
+  if (current.value?.job?.status === 'completed') return 'bg-status-done'
+  if (current.value?.job?.status === 'failed') return 'bg-status-failed'
+  return 'bg-status-running'
+})
 
 async function rerunStage(stage: string): Promise<void> {
   acting.value = true
@@ -232,7 +238,7 @@ async function cancel(): Promise<void> {
   }
 }
 
-/** Status colours, shared so "green means done" is learned once. */
+/** Stage indicators; the adjacent text label remains the authoritative cue. */
 const STATUS_TONE: Record<StageStatus, string> = {
   pending: 'bg-status-pending',
   running: 'bg-status-running',
@@ -284,15 +290,14 @@ const STATUS_LABEL: Record<StageStatus, string> = {
         </div>
 
         <div class="flex flex-wrap gap-2">
-          <RouterLink
-            v-if="(project.data.value?.segment_count ?? 0) > 0"
-            :to="`/projects/${projectId}/editor`"
-            class="rounded border border-accent bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink outline-none transition hover:brightness-110 focus-visible:ring-2 focus-visible:ring-accent"
+          <AppButton
+            v-if="!running"
+            data-test="rerun-project"
+            :variant="current?.job ? 'secondary' : 'primary'"
+            :disabled="acting"
+            @click="start"
           >
-            进入审校工作台
-          </RouterLink>
-          <AppButton v-if="!running" variant="primary" :disabled="acting" @click="start">
-            运行
+            {{ runButtonLabel }}
           </AppButton>
           <AppButton v-else variant="danger" :disabled="acting" @click="cancel">取消</AppButton>
         </div>
@@ -327,7 +332,9 @@ const STATUS_LABEL: Record<StageStatus, string> = {
         </div>
         <div class="mt-3 h-2 overflow-hidden rounded bg-surface-sunken">
           <div
-            class="h-full bg-status-running transition-[width] duration-300"
+            data-test="overall-progress-bar"
+            class="h-full transition-[width] duration-300"
+            :class="progressTone"
             :style="{ width: `${Math.round(progressSummary.fraction * 100)}%` }"
           />
         </div>
@@ -337,90 +344,30 @@ const STATUS_LABEL: Record<StageStatus, string> = {
       </section>
 
       <section
-        v-if="files.data.value && files.data.value.items.length"
+        v-if="current?.job"
+        data-test="project-outputs"
         class="rounded border border-line bg-surface-raised"
       >
-        <header class="flex items-center justify-between border-b border-line px-4 py-2">
-          <h2 class="text-sm font-medium text-ink-muted">磁盘占用</h2>
-          <span class="text-xs text-ink-faint">共 {{ formatBytes(files.data.value.total_bytes) }}</span>
+        <header class="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
+          <div>
+            <h2 class="text-sm font-medium">处理结果</h2>
+            <p class="mt-1 text-xs text-ink-faint">
+              这里显示最近一次运行产物；审校修改后，请生成最终成品再下载。
+            </p>
+          </div>
+          <span v-if="outputs.data.value?.items.length" class="text-xs text-ink-faint">
+            {{ outputs.data.value.items.length }} 个文件
+          </span>
         </header>
 
-        <ul class="divide-y divide-line/60">
-          <li v-for="group in files.data.value.items" :key="group.kind" class="px-4 py-3">
-            <div class="flex items-start justify-between gap-4">
-              <div class="min-w-0">
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="text-sm">{{ group.name }}</span>
-                  <AppBadge>{{ formatBytes(group.bytes) }}</AppBadge>
-                  <span v-if="group.files > 0" class="text-xs text-ink-faint">
-                    {{ group.files }} 个文件
-                  </span>
-                </div>
-                <p class="mt-1 text-xs text-ink-faint">{{ group.warning }}</p>
-              </div>
-
-              <AppButton
-                v-if="group.removable && group.bytes > 0"
-                :variant="group.kind === 'source' ? 'danger' : 'secondary'"
-                size="sm"
-                class="shrink-0"
-                :disabled="removingKind !== null"
-                @click="removeGroup(group.kind, group.name, group.warning)"
-              >
-                {{ removingKind === group.kind ? '删除中…' : '删除' }}
-              </AppButton>
-            </div>
-
-            <!-- The logs are the one category listed file by file: they are
-                 few, they are named after what produced them, and the reason to
-                 keep them is to open one. -->
-            <ul v-if="group.kind === 'logs' && files.data.value.logs.length" class="mt-2 space-y-0.5">
-              <li
-                v-for="log in files.data.value.logs"
-                :key="log.name"
-                class="flex items-center justify-between gap-3 text-xs"
-              >
-                <a
-                  :href="api.projects.logURL(projectId, log.name)"
-                  target="_blank"
-                  rel="noopener"
-                  class="truncate font-mono text-ink-muted transition hover:text-accent"
-                >
-                  {{ log.name }}
-                </a>
-                <span class="shrink-0 text-ink-faint">
-                  {{ formatBytes(log.size_bytes) }} · {{ formatTime(log.modified_at) }}
-                </span>
-              </li>
-            </ul>
-          </li>
-        </ul>
-
-        <p v-if="filesError" class="whitespace-pre-line border-t border-line px-4 py-2 text-xs text-status-failed">
-          {{ filesError }}
-        </p>
-      </section>
-
-      <!--
-        Above the pipeline, because it is the answer to the question someone
-        arrives with once a run has finished. Hidden entirely when there is
-        nothing: an empty box would read as "the run produced nothing", which
-        before the first run is true but not useful.
-      -->
-      <section
-        v-if="outputs.data.value && outputs.data.value.items.length"
-        class="rounded border border-line bg-surface-raised"
-      >
-        <header class="flex items-center justify-between border-b border-line px-4 py-2">
-          <h2 class="text-sm font-medium text-ink-muted">输出文件</h2>
-          <span class="text-xs text-ink-faint">{{ outputs.data.value.items.length }} 个</span>
-        </header>
-
-        <ul class="divide-y divide-line/60">
+        <div v-if="outputs.loading.value && !outputs.data.value" class="px-4 py-6 text-sm text-ink-muted">
+          正在读取产物…
+        </div>
+        <ul v-else-if="outputs.data.value?.items.length" class="divide-y divide-line/60">
           <li
             v-for="file in outputs.data.value.items"
             :key="file.name"
-            class="flex items-center justify-between gap-4 px-4 py-2.5"
+            class="flex items-center justify-between gap-4 px-4 py-3"
           >
             <div class="min-w-0">
               <p class="truncate text-sm">{{ file.name }}</p>
@@ -428,24 +375,79 @@ const STATUS_LABEL: Record<StageStatus, string> = {
                 {{ KIND_LABEL[file.kind] }} · {{ formatBytes(file.size_bytes) }} ·
                 {{ formatTime(file.modified_at) }}
               </p>
-              <!-- What the file is, in the user's terms. The two videos differ
-                   in a way their names do not show, and picking the wrong one
-                   is discovered by watching it. -->
               <p v-if="file.description" class="mt-1 text-xs text-ink-muted">
                 {{ file.description }}
               </p>
             </div>
             <a
               :href="api.projects.outputURL(projectId, file.name)"
-              class="shrink-0 rounded border border-line px-2 py-1 text-xs text-ink-muted transition hover:border-ink-faint hover:text-ink"
+              download
+              class="shrink-0 rounded border border-line px-3 py-1.5 text-xs text-ink-muted outline-none transition hover:border-accent hover:text-ink focus-visible:ring-2 focus-visible:ring-accent"
             >
               下载
             </a>
           </li>
         </ul>
+        <div v-else class="px-4 py-6">
+          <p class="text-sm text-ink-muted">
+            {{ running ? '任务完成后，可下载的字幕和视频会出现在这里。' : '最近一次运行没有生成可下载文件。' }}
+          </p>
+          <p v-if="!running" class="mt-1 text-xs text-ink-faint">可查看处理阶段是否被跳过或失败。</p>
+        </div>
 
-        <p class="border-t border-line px-4 py-2 text-xs text-ink-faint">
+        <p v-if="outputs.data.value?.items.length" class="border-t border-line px-4 py-2 text-xs text-ink-faint">
           文件在 <code class="font-mono">{{ outputs.data.value.dir }}</code>
+        </p>
+      </section>
+
+      <section
+        v-if="(project.data.value?.segment_count ?? 0) > 0"
+        data-test="review-handoff"
+        class="rounded border border-accent/40 bg-surface-raised p-4"
+      >
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 class="text-sm font-medium">字幕审校</h2>
+            <template v-if="(project.data.value?.needs_review_count ?? 0) > 0">
+              <p class="mt-1 text-sm text-ink-muted">
+                有 <span class="font-medium text-status-running">{{ project.data.value?.needs_review_count }} 条需要人工确认</span>。
+                质量检查会说明每一条为什么进入队列。
+              </p>
+            </template>
+            <p v-else class="mt-1 text-sm text-status-done">没有待处理的质量问题，可以生成最终成品。</p>
+          </div>
+
+          <RouterLink
+            v-if="(project.data.value?.needs_review_count ?? 0) > 0"
+            data-test="open-review-queue"
+            :to="`/projects/${projectId}/editor?filter=review`"
+            class="shrink-0 rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink outline-none transition hover:brightness-110 focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            打开待审队列
+          </RouterLink>
+          <AppButton
+            v-else
+            data-test="generate-final-outputs"
+            variant="primary"
+            :disabled="acting || running"
+            @click="start"
+          >
+            {{ acting || running ? '生成中…' : '生成最终成品' }}
+          </AppButton>
+        </div>
+
+        <ol
+          v-if="(project.data.value?.needs_review_count ?? 0) > 0"
+          class="mt-4 grid gap-2 text-xs text-ink-muted md:grid-cols-4"
+          aria-label="字幕审校步骤"
+        >
+          <li class="rounded border border-line bg-surface px-3 py-2"><span class="text-accent">1</span> 选择问题段</li>
+          <li class="rounded border border-line bg-surface px-3 py-2"><span class="text-accent">2</span> 定位播放核对</li>
+          <li class="rounded border border-line bg-surface px-3 py-2"><span class="text-accent">3</span> 修改译文或时间</li>
+          <li class="rounded border border-line bg-surface px-3 py-2"><span class="text-accent">4</span> 保存并通过</li>
+        </ol>
+        <p v-else class="mt-3 text-xs text-ink-faint">
+          系统会复用识别和翻译缓存，只重新生成受字幕修改影响的文件。
         </p>
       </section>
 
@@ -511,21 +513,65 @@ const STATUS_LABEL: Record<StageStatus, string> = {
       </section>
 
       <section
-        v-if="(project.data.value?.segment_count ?? 0) > 0"
-        class="flex items-center justify-between gap-4 rounded border border-accent/40 bg-surface-raised p-4"
+        v-if="files.data.value && files.data.value.items.length"
+        class="rounded border border-line bg-surface-raised"
       >
-        <div>
-          <h2 class="text-sm font-medium">字幕已经可以审校</h2>
-          <p class="mt-1 text-xs text-ink-muted">
-            在工作台中播放原片、修改译文和时间码，并集中处理 {{ project.data.value?.needs_review_count ?? 0 }} 条待审校字幕。
-          </p>
-        </div>
-        <RouterLink
-          :to="`/projects/${projectId}/editor${(project.data.value?.needs_review_count ?? 0) > 0 ? '?filter=review' : ''}`"
-          class="shrink-0 rounded border border-accent px-3 py-1.5 text-sm text-accent outline-none hover:bg-accent hover:text-accent-ink focus-visible:ring-2 focus-visible:ring-accent"
-        >
-          开始审校
-        </RouterLink>
+        <header class="flex items-center justify-between border-b border-line px-4 py-2">
+          <h2 class="text-sm font-medium text-ink-muted">磁盘占用</h2>
+          <span class="text-xs text-ink-faint">共 {{ formatBytes(files.data.value.total_bytes) }}</span>
+        </header>
+
+        <ul class="divide-y divide-line/60">
+          <li v-for="group in files.data.value.items" :key="group.kind" class="px-4 py-3">
+            <div class="flex items-start justify-between gap-4">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm">{{ group.name }}</span>
+                  <AppBadge>{{ formatBytes(group.bytes) }}</AppBadge>
+                  <span v-if="group.files > 0" class="text-xs text-ink-faint">
+                    {{ group.files }} 个文件
+                  </span>
+                </div>
+                <p class="mt-1 text-xs text-ink-faint">{{ group.warning }}</p>
+              </div>
+
+              <AppButton
+                v-if="group.removable && group.bytes > 0"
+                :variant="group.kind === 'source' ? 'danger' : 'secondary'"
+                size="sm"
+                class="shrink-0"
+                :disabled="removingKind !== null"
+                @click="removeGroup(group.kind, group.name, group.warning)"
+              >
+                {{ removingKind === group.kind ? '删除中…' : '删除' }}
+              </AppButton>
+            </div>
+
+            <ul v-if="group.kind === 'logs' && files.data.value.logs.length" class="mt-2 space-y-0.5">
+              <li
+                v-for="log in files.data.value.logs"
+                :key="log.name"
+                class="flex items-center justify-between gap-3 text-xs"
+              >
+                <a
+                  :href="api.projects.logURL(projectId, log.name)"
+                  target="_blank"
+                  rel="noopener"
+                  class="truncate font-mono text-ink-muted transition hover:text-accent"
+                >
+                  {{ log.name }}
+                </a>
+                <span class="shrink-0 text-ink-faint">
+                  {{ formatBytes(log.size_bytes) }} · {{ formatTime(log.modified_at) }}
+                </span>
+              </li>
+            </ul>
+          </li>
+        </ul>
+
+        <p v-if="filesError" class="whitespace-pre-line border-t border-line px-4 py-2 text-xs text-status-failed">
+          {{ filesError }}
+        </p>
       </section>
     </template>
   </div>
