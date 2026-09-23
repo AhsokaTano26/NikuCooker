@@ -5,7 +5,7 @@ import { RouterLink, useRouter } from 'vue-router'
 import { api } from '@/api/client'
 import AppButton from '@/components/AppButton.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
-import { WORKER_LABEL, needsAttention } from '@/composables/workerStatus'
+import { WORKER_LABEL, attentionClass, installStepLabel } from '@/composables/environment'
 import { useEventStore } from '@/stores/events'
 
 const events = useEventStore()
@@ -41,6 +41,32 @@ watch(() => events.resyncCount, overview.run)
 const counts = computed(() => overview.data.value?.counts)
 const stats = computed(() => overview.data.value?.stats)
 const worker = computed(() => overview.data.value?.worker)
+const runtime = computed(() => overview.data.value?.runtime)
+
+/**
+ * The environment's state, as one thing.
+ *
+ * An install in progress is a state of the environment, and the check's verdict
+ * does not move until it finishes — so reading only `worker.status` would report
+ * "尚未安装" over a download that is halfway done, at exactly the moment someone
+ * is looking at this page to see how it is going.
+ */
+const environment = computed(() => {
+  if (runtime.value?.status === 'running') {
+    return {
+      label: '安装中…',
+      step: installStepLabel(runtime.value.phase),
+      tone: 'text-status-running',
+    }
+  }
+
+  const status = worker.value?.status
+  return {
+    label: status ? WORKER_LABEL[status] : '—',
+    step: '',
+    tone: attentionClass(status),
+  }
+})
 
 /**
  * What to tell a user whose machine cannot transcribe.
@@ -51,6 +77,11 @@ const worker = computed(() => overview.data.value?.worker)
  * produces nothing: an answer that has not arrived is not a problem to report.
  */
 const environmentProblem = computed(() => {
+  // An install in progress is not a problem to report: the page says it is
+  // installing instead, and a "去安装" button over a running download is how a
+  // user starts a second one.
+  if (runtime.value?.status === 'running') return null
+
   const status = worker.value?.status
   if (status === 'missing') {
     return {
@@ -179,7 +210,7 @@ function percent(value: number | null | undefined): string {
       </section>
 
       <section class="rounded border border-line bg-surface-raised p-4">
-        <h2 class="text-sm font-medium text-ink-muted">AI Worker</h2>
+        <h2 class="text-sm font-medium text-ink-muted">AI 运行环境</h2>
         <dl class="mt-3 space-y-2 text-sm">
           <div class="flex justify-between gap-4">
             <dt class="shrink-0 text-ink-muted">状态</dt>
@@ -188,15 +219,24 @@ function percent(value: number | null | undefined): string {
               worker is idle" from the absence of an event would be wrong every
               time the stream dropped.
             -->
-            <dd
-              :class="needsAttention(worker?.status) ? 'text-status-failed' : ''"
-            >
-              {{ worker ? WORKER_LABEL[worker.status] : '—' }}
-            </dd>
+            <dd :class="environment.tone">{{ environment.label }}</dd>
+          </div>
+          <div v-if="environment.step" class="flex justify-between gap-4">
+            <dt class="shrink-0 text-ink-muted">进行到</dt>
+            <dd class="text-status-running">{{ environment.step }}</dd>
           </div>
           <div class="flex justify-between gap-4">
             <dt class="shrink-0 text-ink-muted">解释器</dt>
             <dd class="truncate font-mono text-xs" :title="worker?.python">{{ worker?.python || '—' }}</dd>
+          </div>
+          <div class="flex justify-between gap-4">
+            <dt class="shrink-0 text-ink-muted">位置</dt>
+            <dd
+              class="truncate font-mono text-xs"
+              :title="runtime?.runtime_dir"
+            >
+              {{ runtime?.runtime_dir || '—' }}
+            </dd>
           </div>
           <div class="flex justify-between gap-4">
             <dt class="shrink-0 text-ink-muted">协议摘要</dt>

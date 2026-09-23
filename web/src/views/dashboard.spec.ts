@@ -14,7 +14,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import DashboardView from './DashboardView.vue'
-import type { SystemOverview, WorkerStatus } from '@/types/api'
+import type { RuntimeStatus, SystemOverview, WorkerStatus } from '@/types/api'
 
 // The page fetches through the API client; only the worker status varies here.
 const overview = vi.fn()
@@ -23,8 +23,12 @@ vi.mock('@/api/client', () => ({
   ApiError: class extends Error {},
 }))
 
-/** A dashboard payload whose only interesting field is the worker status. */
-function payload(status: WorkerStatus, detail?: string): Partial<SystemOverview> {
+/** A dashboard payload whose only interesting fields are the environment ones. */
+function payload(
+  status: WorkerStatus,
+  detail?: string,
+  install: { status: RuntimeStatus; phase?: string } = { status: 'idle' },
+): Partial<SystemOverview> {
   return {
     version: 'test',
     commit: 'test',
@@ -41,9 +45,10 @@ function payload(status: WorkerStatus, detail?: string): Partial<SystemOverview>
       loaded_models: [],
     },
     runtime: {
-      available: status === 'missing',
-      status: 'idle',
-      provisioned: false,
+      available: status === 'missing' && install.status !== 'running',
+      status: install.status,
+      phase: install.phase,
+      provisioned: status === 'ready',
       runtime_dir: '/data/runtime',
     },
     stats: {
@@ -55,8 +60,12 @@ function payload(status: WorkerStatus, detail?: string): Partial<SystemOverview>
   } as unknown as Partial<SystemOverview>
 }
 
-async function dashboard(status: WorkerStatus, detail?: string) {
-  overview.mockResolvedValue(payload(status, detail))
+async function dashboard(
+  status: WorkerStatus,
+  detail?: string,
+  install?: { status: RuntimeStatus; phase?: string },
+) {
+  overview.mockResolvedValue(payload(status, detail, install))
 
   const wrapper = mount(DashboardView, {
     global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
@@ -88,6 +97,34 @@ describe('the dashboard environment warning', () => {
 
     expect(text).toContain('AI 运行环境有问题')
     expect(text).toContain('重新安装')
+  })
+
+  // The state the page shows while an install is running.
+  //
+  // The check's verdict does not move until the install finishes, so the worker
+  // status is still "missing" throughout — and a page that read only that would
+  // say "尚未安装" over a download that is halfway done, at the one moment
+  // someone is looking at it to see how it is going.
+  it('reports an install in progress, not the stale state behind it', async () => {
+    const wrapper = await dashboard('missing', undefined, {
+      status: 'running',
+      phase: 'dependencies',
+    })
+    const text = wrapper.text()
+
+    expect(text).toContain('安装中…')
+    expect(text).toContain('安装识别依赖')
+    // And offers no button for starting a second one.
+    expect(text).not.toContain('去安装')
+  })
+
+  it('shows the interpreter once the environment works', async () => {
+    const wrapper = await dashboard('ready')
+    const text = wrapper.text()
+
+    expect(text).toContain('可正常使用')
+    expect(text).toContain('/data/runtime/venv/bin/python')
+    expect(text).toContain('/data/runtime')
   })
 
   // The half that keeps the warning worth reading.

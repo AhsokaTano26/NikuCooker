@@ -5,7 +5,7 @@ import { ApiError, api } from '@/api/client'
 import AppButton from '@/components/AppButton.vue'
 import { formatBytes, useAsync } from '@/composables/useAsync'
 import { useEventStore } from '@/stores/events'
-import { WORKER_LABEL, needsAttention } from '@/composables/workerStatus'
+import { INSTALL_STEPS, WORKER_LABEL, needsAttention } from '@/composables/environment'
 import type { RuntimePhase } from '@/types/api'
 
 const events = useEventStore()
@@ -38,20 +38,10 @@ const showRuntime = computed(() => {
   return status === 'missing' || status === 'failed'
 })
 
-/**
- * The four steps, with where the install has got to.
- *
- * A list and not a bar. The installer narrates through uv, which writes a
- * terminal animation rather than a number this could render, and a progress bar
- * over an invented denominator moves backwards — which reads as a bug in the
- * thing that is working.
- */
-const INSTALL_STEPS: { phase: RuntimePhase; label: string }[] = [
-  { phase: 'detect', label: '检查环境' },
-  { phase: 'interpreter', label: '下载 Python 解释器（约 40 MB）' },
-  { phase: 'dependencies', label: '安装识别依赖（约 300 MB）' },
-  { phase: 'verify', label: '自检' },
-]
+// A list and not a bar. The installer narrates through uv, which writes a
+// terminal animation rather than a number this could render, and a progress bar
+// over an invented denominator moves backwards — which reads as a bug in the
+// thing that is working. The steps themselves come from the shared vocabulary.
 
 type StepState = 'done' | 'current' | 'pending' | 'failed'
 
