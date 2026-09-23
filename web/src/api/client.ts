@@ -186,6 +186,16 @@ export interface ProjectOutputs {
   dir: string
 }
 
+export interface EditorMedia {
+  status: 'missing' | 'running' | 'ready' | 'failed'
+  progress?: number
+  error_message?: string
+  source_url: string
+  preview_url?: string
+  direct_playback: boolean
+  media_kind: 'video' | 'audio'
+}
+
 export const projects = {
   list: (query: ListProjectsQuery = {}, signal?: AbortSignal): Promise<Paginated<Project>> =>
     request('/projects', { query: { ...query }, signal }),
@@ -219,6 +229,12 @@ export const projects = {
    *  is read, not saved. */
   logURL: (id: string, name: string): string =>
     `${API_BASE}/projects/${id}/logs/${encodeURIComponent(name)}`,
+
+  editorMedia: (id: string, signal?: AbortSignal): Promise<EditorMedia> =>
+    request(`/projects/${id}/media/preview`, { signal }),
+
+  prepareEditorMedia: (id: string): Promise<EditorMedia> =>
+    request(`/projects/${id}/media/preview`, { method: 'POST' }),
 
   remove: (id: string, options: { confirm: boolean; deleteFiles: boolean }): Promise<void> =>
     request(`/projects/${id}`, {
@@ -276,6 +292,20 @@ export interface UpdateSegmentBody {
   speaker?: string | null
   review_state?: Segment['review_state']
   tags?: string[]
+}
+
+export type BulkSegmentAction =
+  | 'approve'
+  | 'reject'
+  | 'pending'
+  | 'clear'
+  | 'retranslate'
+  | 'tag'
+  | 'untag'
+
+export interface BulkSegmentResult {
+  updated: number
+  failed: { id: string; code: string; message?: string }[]
 }
 
 export const segments = {
@@ -336,6 +366,17 @@ export const segments = {
 
   transcribe: (projectId: string, segmentId: string): Promise<Segment> =>
     request(`/projects/${projectId}/segments/${segmentId}/transcribe`, { method: 'POST' }),
+
+  bulk: (
+    projectId: string,
+    ids: string[],
+    action: BulkSegmentAction,
+    params: Record<string, unknown> = {},
+  ): Promise<BulkSegmentResult> =>
+    request(`/projects/${projectId}/segments/bulk`, {
+      method: 'POST',
+      body: { ids, action, params },
+    }),
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +456,12 @@ export interface ModelRecord {
   estimated_size_bytes?: number
   progress: number
   note?: string
+  recommendation?: string
+  accuracy?: string
+  speed?: string
+  hardware?: string
+  language?: string
+  tags?: string[]
   error_message?: string
   installed_at?: string
 }
@@ -514,6 +561,9 @@ export interface SettingDescriptor {
 
   /** The value in effect right now, after every layer. */
   value: unknown
+
+  /** The value a fresh installation uses before any override. */
+  default_value: unknown
 
   /** The layer that set it: default, config_file, environment, database,
    *  project or cli. */

@@ -61,7 +61,7 @@ export const routes: RouteRecordRaw[] = [
     name: 'subtitle-editor',
     component: () => import('@/views/SubtitleEditorView.vue'),
     meta: {
-      label: '字幕编辑',
+      label: '审校工作台',
       description: '播放器、原文与译文对照、时间轴与 QC 面板。',
       nav: false,
     } satisfies NavMeta,
@@ -69,7 +69,11 @@ export const routes: RouteRecordRaw[] = [
   {
     path: '/projects/:id/review',
     name: 'review-queue',
-    component: () => import('@/views/ReviewQueueView.vue'),
+    redirect: (to) => ({
+      name: 'subtitle-editor',
+      params: { id: to.params['id'] },
+      query: { filter: 'review' },
+    }),
     meta: {
       label: '审校队列',
       description: '按类别分组的问题字幕，支持批量处理。',

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 
 import { ApiError, api, type FileGroupKind, type ProjectOutput } from '@/api/client'
 import AppBadge from '@/components/AppBadge.vue'
 import AppButton from '@/components/AppButton.vue'
 import { formatBytes, formatDuration, formatTime, useAsync } from '@/composables/useAsync'
+import { pipelineProgress } from '@/composables/workbench'
 import { useEventStore, type ServerEvent } from '@/stores/events'
 import type { PipelineView, StageStatus, StageView } from '@/types/api'
 
@@ -187,6 +188,21 @@ watch(projectId, () => {
 })
 
 const running = computed(() => current.value?.job?.status === 'running')
+const progressSummary = computed(() => pipelineProgress(current.value))
+const activeStage = computed(() => current.value?.stages.find((stage) => stage.status === 'running'))
+
+async function rerunStage(stage: string): Promise<void> {
+  acting.value = true
+  actionError.value = null
+  try {
+    await api.run.runStage(projectId.value, stage, true)
+    await pipeline.run()
+  } catch (cause) {
+    actionError.value = cause instanceof ApiError ? cause.message : String(cause)
+  } finally {
+    acting.value = false
+  }
+}
 
 async function start(): Promise<void> {
   acting.value = true
@@ -246,7 +262,7 @@ const STATUS_LABEL: Record<StageStatus, string> = {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="mx-auto max-w-6xl space-y-6">
     <div v-if="project.error.value" class="rounded border border-status-failed/40 bg-surface-raised p-4 text-sm">
       <p class="text-status-failed">{{ project.error.value }}</p>
       <AppButton variant="ghost" size="sm" class="mt-2" @click="project.run">重试</AppButton>
@@ -267,7 +283,14 @@ const STATUS_LABEL: Record<StageStatus, string> = {
           </p>
         </div>
 
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
+          <RouterLink
+            v-if="(project.data.value?.segment_count ?? 0) > 0"
+            :to="`/projects/${projectId}/editor`"
+            class="rounded border border-accent bg-accent px-3 py-1.5 text-sm font-medium text-accent-ink outline-none transition hover:brightness-110 focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            进入审校工作台
+          </RouterLink>
           <AppButton v-if="!running" variant="primary" :disabled="acting" @click="start">
             运行
           </AppButton>
@@ -278,6 +301,40 @@ const STATUS_LABEL: Record<StageStatus, string> = {
       <p v-if="actionError" class="rounded border border-status-failed/40 bg-surface-raised p-3 text-sm text-status-failed">
         {{ actionError }}
       </p>
+
+      <section
+        v-if="current?.job"
+        class="rounded border border-line bg-surface-raised p-4"
+        aria-live="polite"
+      >
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">
+              {{ running ? '任务正在运行' : current.job.status === 'completed' ? '任务已完成' : `任务状态：${current.job.status}` }}
+            </p>
+            <p class="mt-1 text-xs text-ink-muted">
+              <template v-if="activeStage">
+                当前：{{ activeStage.label }} · 第 {{ progressSummary.current }}/{{ progressSummary.total }} 阶段
+              </template>
+              <template v-else>
+                已完成 {{ progressSummary.completed }}/{{ progressSummary.total }} 个阶段
+              </template>
+            </p>
+          </div>
+          <span class="text-lg font-medium tabular-nums">
+            {{ Math.round(progressSummary.fraction * 100) }}%
+          </span>
+        </div>
+        <div class="mt-3 h-2 overflow-hidden rounded bg-surface-sunken">
+          <div
+            class="h-full bg-status-running transition-[width] duration-300"
+            :style="{ width: `${Math.round(progressSummary.fraction * 100)}%` }"
+          />
+        </div>
+        <p v-if="activeStage && (activeStage.progress ?? 0) <= 0" class="mt-2 text-xs text-ink-faint">
+          这个阶段暂时无法计算精确百分比，完成后会自动进入下一阶段。
+        </p>
+      </section>
 
       <section
         v-if="files.data.value && files.data.value.items.length"
@@ -394,10 +451,8 @@ const STATUS_LABEL: Record<StageStatus, string> = {
 
       <section class="rounded border border-line bg-surface-raised">
         <header class="flex items-center justify-between border-b border-line px-4 py-2">
-          <h2 class="text-sm font-medium text-ink-muted">Pipeline</h2>
-          <span v-if="current?.job" class="text-xs text-ink-faint">
-            {{ current.job.status }} · {{ (current.job.progress * 100).toFixed(0) }}%
-          </span>
+          <h2 class="text-sm font-medium text-ink-muted">处理阶段</h2>
+          <span class="text-xs text-ink-faint">缓存阶段不会重复计算</span>
         </header>
 
         <ol class="divide-y divide-line/60">
@@ -409,16 +464,30 @@ const STATUS_LABEL: Record<StageStatus, string> = {
               <span class="w-40 shrink-0 text-sm">{{ stage.label }}</span>
               <span class="w-16 shrink-0 text-xs text-ink-faint">{{ STATUS_LABEL[stage.status] }}</span>
 
-              <div class="h-1 flex-1 overflow-hidden rounded bg-surface-sunken">
+              <div v-if="stage.status === 'running'" class="h-1 flex-1 overflow-hidden rounded bg-surface-sunken">
                 <div
                   class="h-full bg-status-running transition-[width] duration-300"
-                  :style="{ width: `${Math.round((stage.progress ?? 0) * 100)}%` }"
+                  :class="(stage.progress ?? 0) <= 0 ? 'w-1/2 animate-pulse' : ''"
+                  :style="(stage.progress ?? 0) > 0 ? { width: `${Math.round((stage.progress ?? 0) * 100)}%` } : undefined"
                 />
               </div>
+
+              <span v-else class="flex-1 text-xs text-ink-faint">
+                {{ stage.status === 'cached' ? '直接使用已有结果' : stage.status === 'completed' ? '处理完成' : '' }}
+              </span>
 
               <span v-if="stage.duration_ms" class="w-16 shrink-0 text-right text-xs tabular-nums text-ink-faint">
                 {{ (stage.duration_ms / 1000).toFixed(1) }}s
               </span>
+              <AppButton
+                v-if="stage.status === 'failed'"
+                variant="ghost"
+                size="sm"
+                :disabled="acting || running"
+                @click="rerunStage(stage.name)"
+              >
+                重跑此阶段
+              </AppButton>
             </div>
 
             <p v-if="stage.reason" class="mt-1 pl-5 text-xs text-ink-faint">{{ stage.reason }}</p>
@@ -441,10 +510,23 @@ const STATUS_LABEL: Record<StageStatus, string> = {
         </ul>
       </section>
 
-      <p class="text-sm text-ink-faint">
-        字幕编辑在「字幕编辑」，问题条目在「审校队列」。这两页读取的是数据库里的当前内容，
-        包含你的修改，与上面的输出文件（上一次运行的结果）是两回事。
-      </p>
+      <section
+        v-if="(project.data.value?.segment_count ?? 0) > 0"
+        class="flex items-center justify-between gap-4 rounded border border-accent/40 bg-surface-raised p-4"
+      >
+        <div>
+          <h2 class="text-sm font-medium">字幕已经可以审校</h2>
+          <p class="mt-1 text-xs text-ink-muted">
+            在工作台中播放原片、修改译文和时间码，并集中处理 {{ project.data.value?.needs_review_count ?? 0 }} 条待审校字幕。
+          </p>
+        </div>
+        <RouterLink
+          :to="`/projects/${projectId}/editor${(project.data.value?.needs_review_count ?? 0) > 0 ? '?filter=review' : ''}`"
+          class="shrink-0 rounded border border-accent px-3 py-1.5 text-sm text-accent outline-none hover:bg-accent hover:text-accent-ink focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          开始审校
+        </RouterLink>
+      </section>
     </template>
   </div>
 </template>
