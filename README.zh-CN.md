@@ -78,8 +78,9 @@ AI 运行环境会自己装好——见 [INSTALL.zh-CN.md](INSTALL.zh-CN.md)。
 - **Node** 24+ 和 **pnpm** 10+（只在构建网页界面时需要）
 - **FFmpeg** 和 **ffprobe** 在 `PATH` 里
 
-语音识别在任何平台上都跑 CPU，或者在 CUDA 12.x 的 NVIDIA 显卡上跑 GPU。Apple Silicon
-上只能跑 CPU：CTranslate2 没有 Metal 后端，`doctor` 会明说这一点，而不是悄悄降级。
+语音识别在任何平台上都跑 CPU，或者在 NVIDIA 显卡上跑 GPU —— CUDA 那几份库由安装过程
+自带，机器这边只要有驱动。Apple Silicon 上只能跑 CPU：CTranslate2 没有 Metal 后端，
+`doctor` 会明说这一点，而不是悄悄降级。
 
 ## 构建
 

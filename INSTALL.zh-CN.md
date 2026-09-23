@@ -34,7 +34,7 @@
 所以是两步，第二步是一个按钮：
 
 1. 运行二进制。服务立刻起来，网页界面可以用——只有识别不能。
-2. 打开**「系统」**页（`http://localhost:8080/system`），点**「安装 AI 运行环境」**。
+2. 打开**「系统」**页（ `http://localhost:8080/system` ），点**「安装 AI 运行环境」**。
 
 它会下载一个 Python 解释器和依赖，约 300 MB，装进数据目录，装完自检一次，全程逐步报告。
 **只下载这一次。** 你不点，它一个字节都不下；下载量和装到哪里都先写在页面上。
@@ -137,8 +137,9 @@ Expand-Archive nikucooker_<版本>_windows_amd64.zip -DestinationPath .
   光是在 `runtime\venv\Lib\site-packages\` 下面走一圈就已经很长了，那时还没有任何项目。
   **装环境之前先把 `--data-dir` 指到短路径上**，比如 `C:\niku`，或者在注册表里打开长路径
   支持（`LongPathsEnabled`）。装完再挪数据目录等于重装。
-- **NVIDIA 显卡。** `cuda` 那套依赖需要提供 `libcublas` 的 CUDA 12.x 运行时；
-  `doctor` 会真的试加载一次而不是想当然。没有的话识别会退回 CPU。
+- **NVIDIA 显卡。** cuBLAS 由那套 GPU 依赖自带，机器这边只需要装 NVIDIA 驱动
+  （现在的驱动都行）。装环境时选 GPU 那一项，装完的自检会报出这套环境真正能用哪些设备——
+  是探出来的，不是想当然。没有可用设备时识别退回 CPU，并且会说明。
 
 ## Linux
 

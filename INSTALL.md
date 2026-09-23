@@ -158,9 +158,11 @@ Two Windows-specific things `doctor` checks:
   such as `C:\niku` before installing the environment**, or enable long paths in
   the registry (`LongPathsEnabled`). Moving the data directory afterwards means
   installing again.
-- **NVIDIA GPU.** The `cuda` extra needs a CUDA 12.x runtime providing
-  `libcublas`; `doctor` test-loads it rather than assuming. Without one,
-  recognition runs on the CPU.
+- **NVIDIA GPU.** The GPU dependency set brings its own cuBLAS; what the
+  machine has to provide is the NVIDIA driver, which any current one does.
+  Choose the GPU set when installing and the self-check reports the devices the
+  environment can actually use — it probes rather than assuming. With no usable
+  device, recognition runs on the CPU and says so.
 
 ## Linux
 

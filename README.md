@@ -84,7 +84,8 @@ For a checkout, which is to say for building or working on the code:
 - **Node** 24+ and **pnpm** 10+ (only to build the web interface)
 - **FFmpeg** and **ffprobe** on `PATH`
 
-Speech recognition runs on CPU everywhere, or on an NVIDIA GPU with CUDA 12.x.
+Speech recognition runs on CPU everywhere, or on an NVIDIA GPU. The CUDA
+libraries come from the install, so the machine itself needs only a driver.
 Apple Silicon runs on CPU: CTranslate2 has no Metal backend, and `doctor` says so
 rather than silently falling back.
 
