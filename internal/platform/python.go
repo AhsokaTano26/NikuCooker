@@ -63,6 +63,23 @@ type ResolveOptions struct {
 	// the dependencies.
 	AIDir string
 
+	// RuntimeDir is where a provisioned environment lives — see RuntimeDir.
+	// Empty when this build cannot provision, in which case the candidate is
+	// simply absent.
+	//
+	// It is searched before the environment beside the AI package, because this
+	// one is the application's own: it was created from the uv.lock that
+	// shipped with this binary, so the application may verify it and repair it.
+	// A checkout's ai/.venv belongs to whoever is developing the worker.
+	RuntimeDir string
+
+	// Hint is appended to the "no interpreter" error.
+	//
+	// The caller supplies it because only the caller knows what to suggest: a
+	// release binary can offer to install an environment from the interface,
+	// while a container has ai.python set and the answer is different.
+	Hint string
+
 	// RequireImport makes the search skip interpreters that cannot import the
 	// worker package.
 	//
@@ -101,7 +118,7 @@ func ResolvePython(ctx context.Context, opts ResolveOptions) (string, error) {
 		return explicit, nil
 	}
 
-	for _, candidate := range candidates(opts.AIDir) {
+	for _, candidate := range candidates(opts.AIDir, opts.RuntimeDir) {
 		path, err := exec.LookPath(candidate)
 		if err != nil {
 			continue
@@ -112,18 +129,34 @@ func ResolvePython(ctx context.Context, opts ResolveOptions) (string, error) {
 		return path, nil
 	}
 
-	return "", fmt.Errorf(
+	failure := fmt.Errorf(
 		"%w; install one, or set ai.python in the configuration. If the AI environment exists, "+
 			"point ai.dir at the directory containing nikucooker_ai", ErrNoPython)
+
+	if opts.Hint == "" {
+		return "", failure
+	}
+	return "", fmt.Errorf("%w. %s", failure, opts.Hint)
 }
 
 // candidates lists the interpreters to try, in order.
 //
-// The virtual environment beside the AI package comes first: that is where a
-// development install puts the dependencies, and it is far more likely to be
-// usable than whatever `python3` resolves to on a machine with several.
-func candidates(aiDir string) []string {
+// The provisioned environment comes first. This application created it from the
+// uv.lock that shipped with this binary, so it is the one interpreter whose
+// contents are known rather than guessed at.
+//
+// The environment beside the AI package comes next: that is where a development
+// install puts the dependencies, and it is far more likely to be usable than
+// whatever `python3` resolves to on a machine with several. It is second rather
+// than first only because it belongs to whoever is working on the worker — in a
+// release archive it does not exist at all, so the ordering never comes up
+// outside a checkout.
+func candidates(aiDir, runtimeDir string) []string {
 	var found []string
+
+	if runtimeDir != "" {
+		found = append(found, RuntimeVenvPython(runtimeDir))
+	}
 
 	if aiDir != "" {
 		if runtime.GOOS == "windows" {
