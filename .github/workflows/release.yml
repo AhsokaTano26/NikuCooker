@@ -163,6 +163,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check what the archives contain
+        # The same check the package job runs on a pull request, run again here
+        # because this is a different set of archives: the ones that are about
+        # to be published. A glob that flattens a directory, or a uv release
+        # that changed shape since the pull request was merged, produces an
+        # archive that lists correctly and cannot import its own package.
+        #
+        # After the upload rather than before it, because GoReleaser uploads as
+        # it goes — but the release is a draft, so this failing leaves assets
+        # nobody has published and a draft to delete.
+        run: ./scripts/verify-archive.sh dist
+
   package:
     name: Package (dry run)
     # The whole matrix, built and archived exactly as a release would, without
