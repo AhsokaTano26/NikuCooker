@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"runtime"
 
@@ -79,7 +80,7 @@ func (s *Server) provisionRuntime(w http.ResponseWriter, r *http.Request) {
 		"remote_addr", r.RemoteAddr, "extra", extra)
 
 	if err := s.app.StartProvision(s.provisionReporter(), extra); err != nil {
-		if err == provision.ErrBusy {
+		if errors.Is(err, provision.ErrBusy) {
 			s.fail(w, conflict(CodeConflict, "an install is already running"))
 			return
 		}

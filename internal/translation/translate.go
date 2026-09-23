@@ -953,7 +953,6 @@ type tokenBudget struct {
 	mu        sync.Mutex
 	limit     int
 	prompt    int
-	completed int
 	requested int
 }
 

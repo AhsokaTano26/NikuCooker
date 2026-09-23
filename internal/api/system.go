@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -472,6 +471,3 @@ func appRunOptions(projectID string, body runBody) app.RunOptions {
 	}
 	return options
 }
-
-// baseName returns a path's final element.
-func baseName(path string) string { return filepath.Base(path) }

@@ -345,6 +345,9 @@ func (r *sseReader) next(want string) sseFrame {
 		return frame
 	}
 
+	// Lines that match nothing — including the `:` heartbeats the server sends
+	// to keep the connection alive — are consumed and skipped, which is what a
+	// real client does with them too.
 	for r.scanner.Scan() {
 		line := r.scanner.Text()
 		switch {
@@ -373,9 +376,6 @@ func (r *sseReader) next(want string) sseFrame {
 			if err := json.Unmarshal([]byte(payload), &r.pending.Data); err != nil {
 				r.t.Fatalf("the event payload is not JSON: %q", payload)
 			}
-
-		case strings.HasPrefix(line, ":"):
-			// A heartbeat comment. Ignored, as a client would.
 		}
 	}
 
@@ -397,7 +397,12 @@ func (f sseFrame) payload() map[string]any {
 }
 
 // openStream connects to the event stream under a deadline.
-func (h *apiHarness) openStream() (*sseReader, *http.Response) {
+//
+// It returns the response's headers rather than the response, because the body
+// belongs to this helper: it is closed by the cleanup registered below, and a
+// caller holding the response is a caller who might close it twice or not at
+// all. Only the headers are ever read from outside.
+func (h *apiHarness) openStream() (*sseReader, http.Header) {
 	h.t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -414,21 +419,21 @@ func (h *apiHarness) openStream() (*sseReader, *http.Response) {
 	}
 	h.t.Cleanup(func() { _ = response.Body.Close() })
 
-	return newSSEReader(h.t, response.Body), response
+	return newSSEReader(h.t, response.Body), response.Header
 }
 
 // The handshake must arrive first, and must carry the server's position.
 func TestPhase7StreamHandshake(t *testing.T) {
 	h := newAPIHarness(t)
 
-	reader, response := h.openStream()
+	reader, header := h.openStream()
 
-	if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
+	if contentType := header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
 		t.Fatalf("Content-Type = %q", contentType)
 	}
 	// Without this a reverse proxy buffers the stream into uselessness, which
 	// presents as "the UI never updates".
-	if response.Header.Get("X-Accel-Buffering") != "no" {
+	if header.Get("X-Accel-Buffering") != "no" {
 		t.Error("X-Accel-Buffering is not set, so a proxy would buffer the stream")
 	}
 

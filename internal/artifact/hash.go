@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"sort"
@@ -74,6 +75,18 @@ type KeyInputs struct {
 	SourceFingerprint string
 }
 
+// write adds parts to a hash, in order.
+//
+// The return is dropped here and nowhere else. hash.Hash cannot fail to accept
+// bytes — its embedded io.Writer is documented as always succeeding — and the
+// alternative is an ignored error at every one of the twenty call sites below,
+// which is how an ignored error stops meaning anything.
+func write(h hash.Hash, parts ...string) {
+	for _, part := range parts {
+		_, _ = io.WriteString(h, part)
+	}
+}
+
 // DeriveKey computes the artifact's content address.
 //
 //	ConfigHash = sha256(canonical(config) ‖ stage_version ‖ code_revision ‖ fingerprint)
@@ -86,10 +99,9 @@ func DeriveKey(in KeyInputs) (key, inputHash, configHash string, err error) {
 	}
 	inputHash = deriveInputHash(in)
 
+	// The order is the one the doc comment above specifies.
 	full := sha256.New()
-	io.WriteString(full, inputHash)
-	io.WriteString(full, separator)
-	io.WriteString(full, configHash)
+	write(full, inputHash, separator, configHash)
 
 	return hex.EncodeToString(full.Sum(nil)), inputHash, configHash, nil
 }
@@ -105,14 +117,8 @@ func deriveConfigHash(in KeyInputs) (string, error) {
 
 	h := sha256.New()
 	h.Write(canonical)
-	io.WriteString(h, separator)
-	io.WriteString(h, in.Stage)
-	io.WriteString(h, separator)
-	io.WriteString(h, in.StageVersion)
-	io.WriteString(h, separator)
-	io.WriteString(h, in.CodeRevision)
-	io.WriteString(h, separator)
-	h.Write([]byte(fingerprintString(in.Fingerprint)))
+	write(h, separator, in.Stage, separator, in.StageVersion, separator,
+		in.CodeRevision, separator, fingerprintString(in.Fingerprint))
 
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
@@ -130,13 +136,9 @@ func deriveInputHash(in KeyInputs) string {
 	sort.Strings(names)
 
 	for _, name := range names {
-		io.WriteString(h, name)
-		io.WriteString(h, ":")
-		io.WriteString(h, in.UpstreamKeys[name])
-		io.WriteString(h, separator)
+		write(h, name, ":", in.UpstreamKeys[name], separator)
 	}
-	io.WriteString(h, separator)
-	io.WriteString(h, in.SourceFingerprint)
+	write(h, separator, in.SourceFingerprint)
 
 	return hex.EncodeToString(h.Sum(nil))
 }

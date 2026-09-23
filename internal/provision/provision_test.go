@@ -1,6 +1,7 @@
 package provision
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -227,7 +228,7 @@ func TestASecondRunIsRefusedWhileOneIsInFlight(t *testing.T) {
 		t.Fatalf("first Start: %v", err)
 	}
 
-	if err := m.Start(req); err != ErrBusy {
+	if err := m.Start(req); !errors.Is(err, ErrBusy) {
 		t.Errorf("second Start = %v, want ErrBusy", err)
 	}
 
@@ -317,7 +318,7 @@ func TestFindUVReportsWhenThereIsNone(t *testing.T) {
 	_, err := FindUV(t.TempDir(), func(string) (string, error) {
 		return "", os.ErrNotExist
 	})
-	if err != ErrNoUV {
+	if !errors.Is(err, ErrNoUV) {
 		t.Errorf("FindUV = %v, want ErrNoUV", err)
 	}
 }

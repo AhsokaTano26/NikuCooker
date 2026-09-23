@@ -219,7 +219,11 @@ func TestEscapeFilterPathSurvivesFFmpeg(t *testing.T) {
 			filter, text)
 	}
 	delivered := text[start+len(marker):]
-	delivered = delivered[:strings.Index(delivered, "'")]
+	end := strings.Index(delivered, "'")
+	if end < 0 {
+		t.Fatalf("ffmpeg's message has no closing quote, so this test cannot read the path:\n%s", text)
+	}
+	delivered = delivered[:end]
 
 	if delivered != subtitle {
 		t.Errorf("the path FFmpeg received is not the one it was given\n"+

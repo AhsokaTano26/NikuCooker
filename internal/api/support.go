@@ -56,7 +56,15 @@ func redactedConfig(cfg *config.Config) map[string]any {
 	if err != nil {
 		return map[string]any{}
 	}
-	return redact(raw).(map[string]any)
+	redacted, ok := redact(raw).(map[string]any)
+	if !ok {
+		// redact passes a map through as a map, so this cannot happen — and if
+		// it ever does, the one outcome this function exists to prevent is
+		// handing back the configuration unredacted. An empty map is wrong in a
+		// way that is visible rather than in a way that leaks a key.
+		return map[string]any{}
+	}
+	return redacted
 }
 
 // secretNames are the key fragments that mark a value as secret.

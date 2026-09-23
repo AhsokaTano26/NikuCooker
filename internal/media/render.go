@@ -164,8 +164,11 @@ func (s *Service) renderHard(
 		stdout = newProgressWriter(durationSeconds, onProgress)
 
 		if retryErr := s.run(ctx, s.ffmpeg, retryArgs, stdout, &stderr); retryErr != nil {
+			// Both errors are wrapped: the retry's is the one that explains the
+			// render that failed, and the first attempt's is why the retry
+			// happened at all. A caller asking errors.Is gets either.
 			return nil, fmt.Errorf(
-				"media: burn subtitles into %s: %w (the %s attempt failed first: %v)\n  ffmpeg: %s",
+				"media: burn subtitles into %s: %w (the %s attempt failed first: %w)\n  ffmpeg: %s",
 				output, retryErr, encoder, err, tail(stderr.String(), 20))
 		}
 		return []string{fmt.Sprintf(
