@@ -91,20 +91,26 @@ make build          # 先构建网页应用，再构建嵌入了它的 Go 二进
 `make help` 列出所有目标。`make build-go` 跳过前端，直接把 `web/dist` 里现有的东西
 嵌进去。
 
-## Docker
+## 在服务器上运行
 
-服务器上推荐的路径，也是给不想管 Python 环境的人准备的：
+没有容器镜像。发布版二进制本身就是部署方式：网页界面、worker 源码和安装器都在里面，
+它会在运行的这台机器上自己把 Python 环境建起来——所以既不需要构建工具链，也不需要
+你事先有 Python。
 
 ```bash
-docker compose up -d                        # CPU
-docker compose --profile cuda up -d cuda    # NVIDIA 显卡
+./nikucooker serve --host 127.0.0.1 --port 8080
 ```
 
-然后打开 <http://localhost:8080>。
+它默认只绑回环地址，而**这个版本没有任何认证**。绑到公网接口上，等于把一个会读你的
+文件、会跑任务的程序放到网络上。所以要么放在一个会做认证的反向代理后面，要么走 SSH
+隧道：
 
-CUDA 镜像是单独构建的，因为它要大出好几个 GB；用 CPU 的人永远不会被迫下载它。两者都
-挂载 `./data`、`./models` 和 `./config`，所以在它们之间切换时，所有项目、模型和设置
-都还在。
+```bash
+ssh -L 8080:127.0.0.1:8080 那台服务器
+```
+
+用那台机器上管理服务的东西把它跑起来——systemd、launchd agent，或者 Windows 服务。
+收到 `SIGTERM` 会干净退出，网页上也可以关掉它。
 
 ## 安装发布版二进制
 
@@ -137,8 +143,8 @@ make lint           # gofmt、go vet、ruff、ESLint、vue-tsc
 ```
 
 默认值本身就是一份完整可用的配置，只有想改什么才需要配置文件。`NIKUCOOKER_CONFIG`
-指定要读哪个文件，而各个 `NIKUCOOKER_*` 变量设置单个值——容器镜像就是靠这个在
-没有配置文件的情况下配置的。
+指定要读哪个文件，而各个 `NIKUCOOKER_*` 变量设置单个值——部署时想设一个值又不想写
+文件，就是靠这个。
 
 ## 关于 Python 依赖的一个说明
 

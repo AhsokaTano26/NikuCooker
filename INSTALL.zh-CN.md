@@ -2,8 +2,8 @@
 
 [← 返回 README](README.zh-CN.md) · [English](INSTALL.md) · **中文**
 
-本文只讲**怎么装发布版二进制**，覆盖 Windows、macOS 和 Linux。用 Docker、从源码构建、
-以及这个程序到底能做什么，都在 README 里。
+本文只讲**怎么装发布版二进制**，覆盖 Windows、macOS 和 Linux。从源码构建、在服务器上
+运行、以及这个程序到底能做什么，都在 README 里。
 
 每次打 tag 发布时都会产出一个二进制，网页界面已经嵌在里面，所以不需要装 Go、Node
 或任何构建工具链。到 [Releases](https://github.com/AhsokaTano26/NikuCooker/releases)
@@ -147,8 +147,8 @@ tar xzf nikucooker_<版本>_linux_amd64.tar.gz
 `amd64` 和 `arm64` 都有发布。它带的那份 `uv` 需要 glibc 2.28 或更新——还在收更新的发行版
 都满足。
 
-在服务器上，[Docker](README.zh-CN.md#docker) 仍然是推荐的路径：FFmpeg 和 Python worker
-都在镜像里，不需要再装什么环境。
+在服务器上这就是唯一的路径：没有容器镜像。FFmpeg 仍然要你自己装，AI 环境则是每台机器
+各装一次——见[在服务器上运行](README.zh-CN.md#在服务器上运行)。
 
 ## 文件放在哪
 

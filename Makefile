@@ -138,18 +138,6 @@ protocol-manifest: ## Regenerate the protocol fixture manifest after editing fix
 	go test ./pkg/protocol -run TestManifest -update
 
 # ---------------------------------------------------------------------------
-# Docker
-# ---------------------------------------------------------------------------
-
-.PHONY: docker-cpu
-docker-cpu: ## Build the CPU image
-	docker build --target runtime-cpu --build-arg CODE_REVISION=$(CODE_REVISION) -t nikucooker:cpu .
-
-.PHONY: docker-cuda
-docker-cuda: ## Build the CUDA image
-	docker build --target runtime-cuda --build-arg CODE_REVISION=$(CODE_REVISION) -t nikucooker:cuda .
-
-# ---------------------------------------------------------------------------
 # Housekeeping
 # ---------------------------------------------------------------------------
 

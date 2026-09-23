@@ -16,7 +16,7 @@ uv sync --extra dev
 
 `uv.lock` is committed, so this reproduces an exact dependency set rather than
 resolving fresh. `requires-python` is `>=3.12,<3.15`; `.python-version` pins 3.12
-to match the Docker image and CI.
+to match what the first-run installer provisions and what CI tests against.
 
 ### Why PyTorch is not a dependency
 

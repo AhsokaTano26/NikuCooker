@@ -2,8 +2,9 @@
 
 [← Back to README](README.md) · **English** · [中文](INSTALL.zh-CN.md)
 
-How to install a **release binary** on Windows, macOS or Linux. Docker, building
-from source, and what the program actually does are all in the README.
+How to install a **release binary** on Windows, macOS or Linux. Building from
+source, running it on a server, and what the program actually does are all in the
+README.
 
 Every tagged release publishes a binary with the web interface already embedded
 in it, so there is no Go, Node or build toolchain to install. Take the archive
@@ -166,8 +167,9 @@ the host's libc and runs on any distribution. Both `amd64` and `arm64` are
 published. The copy of `uv` it carries does need a glibc of 2.28 or newer, which
 every distribution still receiving updates has.
 
-On a server, [Docker](README.md#docker) remains the recommended path: FFmpeg and
-the Python worker are both in the image, and the environment installs nothing.
+On a server this is the only path: there is no container image. FFmpeg is still
+yours to install, and the AI environment installs per machine — see
+[running on a server](README.md#running-on-a-server).
 
 ## Where it puts your files
 

@@ -38,7 +38,7 @@ install or point at. The API lives under /api/v1 on the same origin.`,
 			defer func() { _ = application.Close() }()
 
 			// Cancelled by either an interrupt or a termination signal, so that
-			// `docker stop` and Ctrl-C behave identically.
+			// a service manager's SIGTERM and Ctrl-C behave identically.
 			signalCtx, stopSignals := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stopSignals()
 

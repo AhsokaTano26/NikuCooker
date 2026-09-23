@@ -78,7 +78,7 @@ archives:
         dst: ai/
       # pyproject.toml declares it, and uv builds the project itself before
       # syncing dependencies — without it, hatchling fails with "Readme file
-      # does not exist". Same reason the Dockerfile copies it.
+      # does not exist".
       - src: ai/README.md
         dst: ai/
       - src: ai/.python-version
@@ -93,8 +93,7 @@ archives:
       #
       # The path is not decoration. schema.py resolves it as parents[3] of its
       # own file, which is the archive root, so it has to sit at
-      # pkg/protocol/testdata beside ai/ — the same thing, and for the same
-      # reason, as the COPY in the Dockerfile.
+      # pkg/protocol/testdata beside ai/ and nothing else will do.
       - src: pkg/protocol/testdata/**/*
         dst: pkg/protocol/testdata
 
@@ -141,9 +140,6 @@ release:
     See [INSTALL.md](https://github.com/AhsokaTano26/NikuCooker/blob/main/INSTALL.md)
     for the platform-specific steps.
 
-    If you would rather not manage any of this, use the Docker image instead —
-    it is the recommended path for a server:
-
-    ```
-    docker compose up -d
-    ```
+    On a server, run the same binary under a service manager. It listens on
+    loopback by default: `--host 0.0.0.0` exposes it, and this build has no
+    authentication, so put it behind a reverse proxy that does.

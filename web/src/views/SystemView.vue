@@ -117,16 +117,14 @@ function percent(value: number | null | undefined): string {
 /**
  * Stops the server.
  *
- * The confirmation says what actually happens, including the part that is not
- * obvious. Under `docker compose` the process exiting is *not* the container
- * staying down — the restart policy brings it straight back up — and a user who
- * was not told that concludes the button is broken and stops trusting it.
+ * The confirmation says what actually happens. Nothing is hidden behind it:
+ * the process really does end, the page really does lose its connection, and
+ * restarting means running the command again.
  */
 async function shutdown(): Promise<void> {
   const confirmed = confirm(
     '关闭 NikuCooker 服务？\n\n' +
-      '正在运行的作业会中断，这个页面会失去连接，需要重新启动进程才能继续使用。\n\n' +
-      '用 Docker 运行时，容器会在几秒后自动重启：点这个按钮等于重启一次服务。',
+      '正在运行的作业会中断，这个页面会失去连接，需要重新启动进程才能继续使用。',
   )
   if (!confirmed) return
 
@@ -360,12 +358,6 @@ async function shutdown(): Promise<void> {
             结束服务进程，等同于在终端按 Ctrl-C。正在运行的作业会中断 ——
             但不会丢成果，下次运行会自动接着算。
           </p>
-          <p class="mt-2 text-xs text-ink-faint">
-            用 Docker 运行时，<span class="font-mono">restart: unless-stopped</span>
-            会在几秒后把容器重新拉起来，点这个按钮等于重启服务而不是停掉它。
-            要真正停下来，请用 <span class="font-mono">docker compose stop</span>。
-          </p>
-
           <p
             v-if="shutdownError"
             class="mt-3 rounded border border-status-failed/40 bg-surface p-3 text-sm text-status-failed"

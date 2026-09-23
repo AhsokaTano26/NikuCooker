@@ -98,21 +98,29 @@ make build          # web application, then the Go binary with it embedded
 `make help` lists every target. `make build-go` skips the frontend and embeds
 whatever is already in `web/dist`.
 
-## Docker
+## Running on a server
 
-The recommended path for a server, or for anyone who would rather not manage a
-Python environment:
+There is no container image. The release binary is the deployment: it carries
+the web interface, the worker's source and the installer, and it builds its own
+Python environment on the machine it runs on — which is why nothing here needs
+a build toolchain or a Python toolchain.
 
 ```bash
-docker compose up -d                        # CPU
-docker compose --profile cuda up -d cuda    # NVIDIA GPU
+./nikucooker serve --host 127.0.0.1 --port 8080
 ```
 
-Then open <http://localhost:8080>.
+It binds to loopback by default, and **this build has no authentication**.
+Binding it to a public interface puts a program that reads your files and runs
+jobs on the network, so reach it through a reverse proxy that authenticates, or
+over an SSH tunnel:
 
-The CUDA image is a separate build because it is several gigabytes larger; CPU
-users are never made to download it. Both mount `./data`, `./models` and
-`./config`, so switching between them keeps every project, model and setting.
+```bash
+ssh -L 8080:127.0.0.1:8080 the-server
+```
+
+Run it under whatever supervises services on that machine — systemd, a launchd
+agent, or a Windows service. It stops cleanly on `SIGTERM`, and the interface
+can stop it as well.
 
 ## Installing a release binary
 
@@ -149,8 +157,8 @@ defaults → config file → environment → project overlay → CLI flags
 
 The defaults are a complete, working configuration; a config file is only needed
 to change something. `NIKUCOOKER_CONFIG` names the file to read, and the
-individual `NIKUCOOKER_*` variables set single values — which is how the
-container image is configured without one.
+individual `NIKUCOOKER_*` variables set single values — which is how a
+deployment sets one without writing a file.
 
 ## A note on the Python dependency set
 

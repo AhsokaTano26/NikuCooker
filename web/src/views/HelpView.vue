@@ -3,7 +3,7 @@
  * The manual, in the application.
  *
  * It exists because the long-form documentation lives in the repository, and
- * the people who most need it are the ones running this from a container —
+ * the people who most need it are the ones running this from a release binary —
  * who never see that repository at all. So this is written for them: what the
  * stages are, what to do when something goes wrong, and nothing about how any
  * of it is built.
@@ -118,11 +118,6 @@ const problems: Problem[] = [
       '看项目页有没有红色的阶段。失败阶段的原因写在运行日志里（项目页的日志文件，或「日志」页面）。修好之后重跑，已经算过的阶段不会重算。',
   },
   {
-    symptom: 'Docker 里点了「关闭服务」，容器又起来了',
-    answer:
-      '这是 compose 的 restart: unless-stopped 在起作用，不是按钮坏了。它重启的是容器，进程确实退出过。要真正停下来用 docker compose stop。',
-  },
-  {
     symptom: '磁盘占用越来越大',
     answer:
       '项目页的「磁盘占用」列出四类文件各占多少，中间产物通常最大且可以随时删掉重算。「设置 → 清理」里可以配置按天数自动删除旧项目和旧日志。',
@@ -163,7 +158,7 @@ const problems: Problem[] = [
       <p class="mt-2 text-xs text-ink-faint">
         <span class="font-mono">nikucooker serve</span> 启动成功后会自己打开这个页面。
         不想让它打开就加 <span class="font-mono">--open=false</span>；
-        在没有桌面环境的机器上（比如容器里）它本来就不会打开，也不会报错。
+        在没有桌面环境的机器上（比如一台服务器）它本来就不会打开，也不会报错。
       </p>
     </section>
 

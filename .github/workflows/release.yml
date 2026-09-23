@@ -12,10 +12,7 @@ name: Release
 # The ref is the tag, so GoReleaser reads the version from it — nothing has to
 # be told what version it is building.
 #
-# Two things are published from one tag: the binaries as a GitHub release, and
-# the CPU container image as tano26/nikucooker on Docker Hub. The image needs
-# DOCKERHUB_USERNAME and DOCKERHUB_TOKEN in the repository's secrets — an
-# access token from Docker Hub, not the account password.
+# One thing is published from one tag: the binaries, as a GitHub release.
 on:
   push:
     tags:
@@ -144,8 +141,8 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          # Pinned to the value in web/package.json, which corepack also uses
-          # inside the Docker build and CI uses for the test suite.
+          # Pinned to the value in web/package.json, which corepack also reads
+          # and CI uses for the test suite.
           version: 10.33.0
 
       - uses: actions/setup-node@v6
@@ -165,147 +162,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # The same CPU image CI builds on every change, pushed to Docker Hub.
-  #
-  # One runner per architecture rather than one emulated build. The arm64 image
-  # carries a Python environment with ctranslate2 and onnxruntime in it, and
-  # building that under QEMU takes long enough that a release would look hung.
-  # Both runners are free for a public repository.
-  image:
-    name: Image (${{ matrix.platform }})
-    needs: verify
-    if: github.event_name == 'push'
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-            arch: amd64
-            # The scope ci.yml writes under, so a release reuses the layers the
-            # CI build already produced instead of starting from an empty
-            # cache every time. Deliberately not derived from the platform
-            # string, which would name a scope nothing else writes to.
-            cache_scope: runtime-cpu
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            arch: arm64
-            cache_scope: runtime-cpu-arm64
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: tano26/nikucooker
-
-      - name: Timestamp
-        id: stamp
-        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          target: runtime-cpu
-          platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
-          # Pushed by digest, tagged later by a job that can see both
-          # architectures at once. Tagging here would publish a manifest that
-          # resolves to amd64 and then, a few minutes later, to arm64 — so
-          # whoever pulled in between got an image chosen by timing.
-          outputs: type=image,name=tano26/nikucooker,push-by-digest=true,name-canonical=true,push=true
-          # Without these the binary reports "dev" and, worse, carries a
-          # codeRevision of "unknown" — which is the component that makes the
-          # artifact cache safe across upgrades. See docs/artifact-cache.md §2.2.
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
-            CODE_REVISION=${{ github.sha }}
-            BUILD_DATE=${{ steps.stamp.outputs.value }}
-          cache-from: type=gha,scope=${{ matrix.cache_scope }}
-          cache-to: type=gha,scope=${{ matrix.cache_scope }},mode=max
-
-      - name: Export the digest
-        run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          # One artifact per architecture; the merge job collects them all.
-          # The platform string carries a slash and cannot be an artifact name.
-          name: digest-${{ matrix.arch }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-  # Gives the two digests one set of tags, as a manifest list.
-  image-tags:
-    name: Image tags
-    needs: image
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: /tmp/digests
-          pattern: digest-*
-          merge-multiple: true
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: tano26/nikucooker
-          # 0.1.0 from the tag, and latest — which the default `latest=auto`
-          # flavor attaches to a release but not to a `-rc.1`.
-          tags: |
-            type=semver,pattern={{version}}
-            type=sha,format=short
-
-      - name: Create the manifest
-        working-directory: /tmp/digests
-        run: |
-          # Every architecture must be here before anything is tagged. The
-          # build jobs pushed their images by digest and gave them no tags, so
-          # the digests are the only reference to them — and a manifest built
-          # from one digest would put a multi-architecture tag on an image that
-          # only runs on one architecture.
-          digests=(*)
-          if [ "${#digests[@]}" -ne 2 ]; then
-            echo "::error::expected 2 architecture digests, found ${#digests[@]}"
-            ls -la
-            exit 1
-          fi
-
-          echo "tags: ${DOCKER_METADATA_OUTPUT_TAGS}"
-
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            "${digests[@]/#/tano26/nikucooker@sha256:}"
-
-      - name: Report what was published
-        run: docker buildx imagetools inspect tano26/nikucooker:${{ steps.meta.outputs.version }}
 
   package:
     name: Package (dry run)
